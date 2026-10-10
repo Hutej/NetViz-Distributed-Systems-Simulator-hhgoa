@@ -2,6 +2,7 @@ import ControlPanel from "../components/ControlPanel";
 import EventLog from "../components/EventLog";
 import MessagesPanel from "../components/MessagesPanel";
 import NetworkCanvas from "../components/NetworkCanvas";
+import NetworkPanel from "../components/NetworkPanel";
 import NodeInspector from "../components/NodeInspector";
 import ScenarioProgress from "../components/ScenarioProgress";
 import StatsPanel from "../components/StatsPanel";
@@ -11,8 +12,11 @@ import type { SimulationState } from "../api/types";
 interface Props {
   state: SimulationState;
   selectedId: string | null;
+  selectedLink: [string, string] | null;
   onSelect: (id: string | null) => void;
+  onSelectLink: (pair: [string, string] | null) => void;
   onAction: (kind: ActionKind, nodeId?: string) => void;
+  onToggleLink: (pair: [string, string], block: boolean) => void;
   scenarioRunning: boolean;
   scenario: ScenarioStatus | null;
   onOpenScenarios: () => void;
@@ -24,13 +28,17 @@ const LEGEND = [
   { label: "Candidate", className: "bg-amber-300" },
   { label: "Offline", className: "bg-red-500" },
   { label: "Isolated", className: "border border-orange-400 bg-transparent" },
+  { label: "Blocked link", className: "border border-dashed border-red-400 bg-transparent" },
 ];
 
 export default function Simulator({
   state,
   selectedId,
+  selectedLink,
   onSelect,
+  onSelectLink,
   onAction,
+  onToggleLink,
   scenarioRunning,
   scenario,
   onOpenScenarios,
@@ -61,7 +69,18 @@ export default function Simulator({
       {/* Topology status + legend, above the canvas so nothing covers nodes */}
       <div className="mb-3 flex flex-wrap items-center justify-between gap-x-4 gap-y-2 rounded-lg border border-slate-800 bg-slate-900/50 px-4 py-2.5">
         <p className="text-xs text-slate-300">
-          {state.cluster.total_nodes} nodes · {linkCount} active links ·{" "}
+          {state.cluster.total_nodes} nodes · {linkCount} active links
+          {state.blocked_links.length > 0 && (
+            <span className="text-red-400">
+              {" "}· {state.blocked_links.length} blocked
+            </span>
+          )}
+          {state.cluster.components.length > 1 && (
+            <span className="text-amber-300">
+              {" "}· {state.cluster.components.length} components
+            </span>
+          )}
+          {" "}·{" "}
           <span className={healthy ? "text-emerald-400" : "text-amber-300"}>
             {state.cluster.health}
           </span>
@@ -80,7 +99,13 @@ export default function Simulator({
         {/* Primary workspace */}
         <div className="min-w-0 space-y-4">
           <div className="h-[420px] rounded-xl border border-slate-800 bg-gradient-to-b from-slate-900/60 to-slate-950 sm:h-[480px] lg:h-[540px]">
-            <NetworkCanvas state={state} selectedId={selectedId} onSelect={onSelect} />
+            <NetworkCanvas
+              state={state}
+              selectedId={selectedId}
+              selectedLink={selectedLink}
+              onSelect={onSelect}
+              onSelectLink={onSelectLink}
+            />
           </div>
           <StatsPanel state={state} />
         </div>
@@ -102,6 +127,7 @@ export default function Simulator({
               </p>
             </div>
           )}
+          <NetworkPanel state={state} selectedLink={selectedLink} onToggleLink={onToggleLink} />
           <ControlPanel
             state={state}
             selectedId={selectedId}

@@ -21,6 +21,13 @@ class NodeIdRequest(Schema):
     node_id: str
 
 
+class LinkRequest(Schema):
+    """An undirected pair of node IDs."""
+
+    node_a: str
+    node_b: str
+
+
 class AddNodeRequest(Schema):
     """node_id is optional — the engine generates a free ID when omitted."""
 
@@ -45,6 +52,9 @@ class NodeDict(TypedDict):
     term: int
     log_index: int
     partitioned: bool
+    # Peers reachable through the communication graph (shared backend
+    # connectivity calculation — the frontend never recomputes this).
+    reachable_peers: list[str]
 
 
 # Functional form because "from" is a Python keyword.
@@ -68,6 +78,8 @@ class ClusterInfoDict(TypedDict):
     quorum_size: int
     quorum_available: bool
     health: str
+    # Connected components of the communication graph (node IDs).
+    components: list[list[str]]
 
 
 class SimulationStateDict(TypedDict):
@@ -75,6 +87,9 @@ class SimulationStateDict(TypedDict):
     current_leader: str | None
     current_term: int
     total_messages: int
+    # Disabled undirected links, each pair sorted. Replaces nothing — the
+    # node-level `partitioned` flag remains a separate, coarser fault.
+    blocked_links: list[list[str]]
     recent_messages: list[MessageDict]
     recent_events: list[EventDict]
     cluster: ClusterInfoDict

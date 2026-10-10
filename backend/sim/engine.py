@@ -5,8 +5,11 @@ This module is the single source of truth for the simulated cluster.
 This is a SINGLE-PROCESS educational model, not a real distributed cluster
 and not a full Raft implementation: no persistence, no election timers, no
 real message transport. Elections are deterministic (the eligible node with
-the lexicographically smallest ID wins) and quorum is
-floor(total_nodes / 2) + 1, counting all nodes.
+the lexicographically smallest ID that sits in a connected group large
+enough for quorum wins) and quorum is floor(total_nodes / 2) + 1, counting
+all nodes. Connectivity is a graph calculation over online, unpartitioned
+nodes with unblocked links; it is the ONLY reachability calculation in the
+system — the API and the frontend both consume it from the state.
 
 A re-entrant lock guards every state transition because Django runs
 synchronous API handlers on a thread pool.
@@ -78,6 +81,9 @@ class SimulationEngine:
         }
         self._current_leader = "A"
         self._current_term = 1
+        # Disabled undirected links, stored as frozensets so (A, B) and (B, A)
+        # are the same link and cannot be stored twice.
+        self._blocked_links: set[frozenset[str]] = set()
         self.total_messages = 0
         self.recent_messages: list[dict] = []
         self.recent_events: list[dict] = []
@@ -125,27 +131,69 @@ class SimulationEngine:
         # Simplified majority for education, not full Raft.
         return len(self._nodes) // 2 + 1
 
-    def _reachable_online(self) -> list[SimNode]:
+    def _active_nodes(self) -> list[SimNode]:
+        """Online and not isolated by a node-level partition."""
         return [n for n in self._nodes.values() if n.status == "online" and not n.partitioned]
+
+    # ------------------------------------------------------------------
+    # Shared connectivity calculation.
+    #
+    # The communication graph has the active (online, unpartitioned) nodes
+    # as vertices; every pair is connected unless its link is blocked.
+    # Reachability, quorum and elections all derive from these components —
+    # there is no second, inconsistent calculation anywhere else.
+    # ------------------------------------------------------------------
+
+    def _components_locked(self) -> list[set[str]]:
+        remaining = {n.id for n in self._active_nodes()}
+        components: list[set[str]] = []
+        while remaining:
+            start = min(remaining)
+            remaining.remove(start)
+            component = {start}
+            frontier = [start]
+            while frontier:
+                current = frontier.pop()
+                for other in list(remaining):
+                    if frozenset((current, other)) not in self._blocked_links:
+                        remaining.remove(other)
+                        component.add(other)
+                        frontier.append(other)
+            components.append(component)
+        return components
 
     def _state_locked(self) -> SimulationStateDict:
         total = len(self._nodes)
         online = sum(1 for n in self._nodes.values() if n.status == "online")
-        reachable = self._reachable_online()
         quorum = self._quorum_size()
-        quorum_available = len(reachable) >= quorum
+        components = self._components_locked()
+        quorum_available = max((len(c) for c in components), default=0) >= quorum
         leader = self._leader_node()
-        healthy = bool(
-            leader is not None
-            and leader.status == "online"
-            and not leader.partitioned
-            and quorum_available
+        # A leader must actually be able to REACH quorum through the network,
+        # not merely be online.
+        leader_component = (
+            next((c for c in components if leader.id in c), set())
+            if leader is not None and leader.status == "online" and not leader.partitioned
+            else set()
         )
+        healthy = bool(leader is not None and len(leader_component) >= quorum)
+
+        nodes_out = []
+        for node in self._nodes.values():
+            node_dict = node.as_dict()
+            node_dict["reachable_peers"] = (
+                sorted(next((c for c in components if node.id in c), set()) - {node.id})
+                if node.status == "online" and not node.partitioned
+                else []
+            )
+            nodes_out.append(node_dict)
+
         return {
-            "nodes": [n.as_dict() for n in self._nodes.values()],
+            "nodes": nodes_out,
             "current_leader": self._current_leader,
             "current_term": self._current_term,
             "total_messages": self.total_messages,
+            "blocked_links": [sorted(link) for link in self._blocked_links],
             "recent_messages": list(self.recent_messages),
             "recent_events": list(self.recent_events),
             "cluster": {
@@ -155,6 +203,7 @@ class SimulationEngine:
                 "quorum_size": quorum,
                 "quorum_available": quorum_available,
                 "health": "healthy" if healthy else "degraded",
+                "components": [sorted(c) for c in components],
             },
         }
 
@@ -177,7 +226,9 @@ class SimulationEngine:
             self._nodes[node_id] = node
             self._event("system", f"Node {node_id} joined the cluster as a follower.")
             leader = self._leader_node()
-            if leader is not None and not leader.partitioned:
+            if leader is not None and leader.id in next(
+                (c for c in self._components_locked() if leader.id in c), set()
+            ):
                 self._message("heartbeat", leader.id, node_id)
             return self._state_locked()
 
@@ -212,43 +263,96 @@ class SimulationEngine:
             node.term = self._current_term
             self._event("recovery", f"Node {node_id} recovered and rejoined the cluster as a follower.")
             leader = self._leader_node()
-            if leader is not None and not leader.partitioned:
+            if leader is not None and leader.id in next(
+                (c for c in self._components_locked() if leader.id in c), set()
+            ):
                 self._message("heartbeat", leader.id, node_id)
+            return self._state_locked()
+
+    def block_link(self, node_a: str, node_b: str) -> SimulationStateDict:
+        """Disable communication on one undirected link; both nodes stay online."""
+        with self._lock:
+            node_a = self._require_node(node_a).id
+            node_b = self._require_node(node_b).id
+            if node_a == node_b:
+                raise SimulationError("A node cannot block a link to itself.")
+            link = frozenset((node_a, node_b))
+            if link in self._blocked_links:
+                raise SimulationError(f"The link between {node_a} and {node_b} is already blocked.")
+            self._blocked_links.add(link)
+            self._event(
+                "partition",
+                f"Link fault: the connection between {node_a} and {node_b} is disabled.",
+            )
+            return self._state_locked()
+
+    def restore_link(self, node_a: str, node_b: str) -> SimulationStateDict:
+        with self._lock:
+            node_a = self._require_node(node_a).id
+            node_b = self._require_node(node_b).id
+            if node_a == node_b:
+                raise SimulationError("A node cannot have a link to itself.")
+            link = frozenset((node_a, node_b))
+            if link not in self._blocked_links:
+                raise SimulationError(f"The link between {node_a} and {node_b} is not blocked.")
+            self._blocked_links.remove(link)
+            self._event(
+                "partition",
+                f"Link restored: {node_a} and {node_b} can communicate again.",
+            )
             return self._state_locked()
 
     def start_election(self) -> SimulationStateDict:
         with self._lock:
             total = len(self._nodes)
             quorum = self._quorum_size()
-            eligible = sorted(self._reachable_online(), key=lambda n: n.id)
-            for n in eligible:
-                n.role = "candidate"
-            candidate = eligible[0] if eligible else None
-            for n in eligible[1:]:
-                self._message("vote_request", candidate.id, n.id)  # type: ignore[union-attr]
-                self._message("vote", n.id, candidate.id)  # type: ignore[union-attr]
-            if len(eligible) >= quorum:
+            active = self._active_nodes()
+            components = self._components_locked()
+
+            # A candidate can only win inside a connected group large enough
+            # for quorum: it cannot collect votes it cannot reach. The
+            # winner is deterministic — the smallest node ID in any
+            # quorum-sized group.
+            quorum_groups = [c for c in components if len(c) >= quorum]
+            candidate_pool = sorted(node_id for c in quorum_groups for node_id in c)
+
+            for node in active:
+                node.role = "candidate"
+
+            if candidate_pool:
+                candidate_id = candidate_pool[0]
+                voters = sorted(next(c for c in quorum_groups if candidate_id in c))
+                for voter_id in voters:
+                    if voter_id != candidate_id:
+                        self._message("vote_request", candidate_id, voter_id)
+                        self._message("vote", voter_id, candidate_id)
                 self._current_term += 1
-                for n in eligible:
-                    n.role = "follower"
-                    n.term = self._current_term
-                candidate.role = "leader"  # type: ignore[union-attr]
-                self._current_leader = candidate.id  # type: ignore[union-attr]
+                for node in active:
+                    node.role = "follower"
+                    if node.id in voters:
+                        node.term = self._current_term
+                candidate = self._nodes[candidate_id]
+                candidate.role = "leader"
+                self._current_leader = candidate_id
                 self._event(
                     "election",
-                    f"Node {candidate.id} won the election for term {self._current_term} "
-                    f"({len(eligible)}/{total} nodes voting, quorum {quorum}).",
+                    f"Node {candidate_id} won the election for term {self._current_term} "
+                    f"({len(voters)}/{total} nodes can reach it in its connected group, "
+                    f"quorum {quorum}).",
                 )
-                for n in eligible[1:]:
-                    self._message("heartbeat", candidate.id, n.id)  # type: ignore[union-attr]
+                for voter_id in voters:
+                    if voter_id != candidate_id:
+                        self._message("heartbeat", candidate_id, voter_id)
             else:
-                for n in eligible:
-                    n.role = "follower"
+                for node in active:
+                    node.role = "follower"
                 self._current_leader = None
+                largest = max((len(c) for c in components), default=0)
                 self._event(
                     "election",
-                    f"Election failed: only {len(eligible)} of {total} nodes are reachable, "
-                    f"but quorum requires {quorum}. The cluster has no leader.",
+                    f"Election failed: the largest connected group reaches only {largest} of "
+                    f"{total} nodes, but quorum requires {quorum}. No node can safely become "
+                    f"leader, so the cluster stays leaderless.",
                 )
             return self._state_locked()
 
@@ -269,6 +373,13 @@ class SimulationEngine:
                 self._event("partition", f"Network healed: Node {node_id} is reconnected to the cluster.")
             return self._state_locked()
 
+    def _miss_reason(self, node: SimNode) -> str:
+        if node.status == "offline":
+            return "offline"
+        if node.partitioned:
+            return "isolated by a network partition"
+        return "no active network path to the leader"
+
     def replicate(self) -> SimulationStateDict:
         with self._lock:
             leader = self._leader_node()
@@ -278,22 +389,29 @@ class SimulationEngine:
                 raise SimulationError(f"Leader {leader.id} is offline — no node can accept entries.")
             if leader.partitioned:
                 raise SimulationError(f"Leader {leader.id} is isolated behind a network partition.")
-            followers = [
+            leader_component = next(
+                (c for c in self._components_locked() if leader.id in c), set()
+            )
+            receivers = [
                 n
                 for n in self._nodes.values()
-                if n.id != leader.id and n.status == "online" and not n.partitioned
+                if n.id != leader.id and n.status == "online" and not n.partitioned and n.id in leader_component
             ]
-            if not followers:
+            if not receivers:
                 raise SimulationError("The leader has no reachable online followers to replicate to.")
             leader.log_index += 1
-            for follower in followers:
+            for follower in receivers:
                 follower.log_index = leader.log_index
                 self._message("replication", leader.id, follower.id)
-            self._event(
-                "replication",
+            missed = [n for n in self._nodes.values() if n.id != leader.id and n not in receivers]
+            description = (
                 f"Leader {leader.id} replicated log entry {leader.log_index} "
-                f"to {len(followers)} follower(s).",
+                f"to {len(receivers)} follower(s): {', '.join(f.id for f in receivers)}."
             )
+            if missed:
+                details = ", ".join(f"{n.id} missed it ({self._miss_reason(n)})" for n in missed)
+                description += f" {details}."
+            self._event("replication", description)
             return self._state_locked()
 
     def reset(self) -> SimulationStateDict:

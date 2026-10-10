@@ -17,13 +17,15 @@ export default function NodeInspector({ state, selectedId, onClear }: Props) {
   const node = state.nodes.find((n) => n.id === selectedId);
   if (!node) return null;
 
-  // Reachable peers derived from actual simulation state: an offline or
-  // isolated node can reach nobody.
-  const reachable = node.status === "online" && !node.partitioned
-    ? state.nodes.filter(
-        (n) => n.id !== node.id && n.status === "online" && !n.partitioned
-      )
-    : [];
+  // Reachable peers come straight from the backend's shared connectivity
+  // calculation — the frontend never recomputes reachability.
+  const reachable = node.reachable_peers;
+  const unreachableReason =
+    node.status === "offline"
+      ? "node is offline"
+      : node.partitioned
+        ? "behind a partition"
+        : "no active network path";
 
   return (
     <section
@@ -77,16 +79,14 @@ export default function NodeInspector({ state, selectedId, onClear }: Props) {
         <Radio className="size-3.5 shrink-0 text-slate-500" />
         <span className="text-slate-500">Reachable peers:</span>
         {reachable.length === 0 ? (
-          <span className="font-mono text-slate-500">
-            none {node.status === "offline" ? "— node is offline" : node.partitioned ? "— behind a partition" : ""}
-          </span>
+          <span className="font-mono text-slate-500">none — {unreachableReason}</span>
         ) : (
           reachable.map((peer) => (
             <span
-              key={peer.id}
+              key={peer}
               className="rounded border border-slate-700 bg-slate-800/60 px-1.5 py-0.5 font-mono text-slate-300"
             >
-              {peer.id}
+              {peer}
             </span>
           ))
         )}

@@ -77,6 +77,7 @@ export function useSimulation() {
   const [wsStatus, setWsStatus] = useState<Connection>("connecting");
   const [error, setError] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectedLink, setSelectedLink] = useState<[string, string] | null>(null);
   const [scenario, setScenario] = useState<ScenarioStatus | null>(null);
 
   const stateRef = useRef<SimulationState | null>(null);
@@ -155,6 +156,28 @@ export function useSimulation() {
     }
   }, [state, selectedId]);
 
+  // Node and link selection are mutually exclusive: edges and nodes occupy
+  // the same canvas, and one clear focus keeps the inspector predictable.
+  const selectNode = useCallback((id: string | null) => {
+    setSelectedId(id);
+    if (id !== null) setSelectedLink(null);
+  }, []);
+
+  const selectLink = useCallback((pair: [string, string] | null) => {
+    setSelectedLink(pair);
+    if (pair !== null) setSelectedId(null);
+  }, []);
+
+  // Reconcile link selection when either endpoint disappears.
+  useEffect(() => {
+    if (state && selectedLink) {
+      const ids = new Set(state.nodes.map((n) => n.id));
+      if (!ids.has(selectedLink[0]) || !ids.has(selectedLink[1])) {
+        setSelectedLink(null);
+      }
+    }
+  }, [state, selectedLink]);
+
   const act = useCallback(
     async (kind: ActionKind, nodeId?: string) => {
       setError(null);
@@ -171,6 +194,23 @@ export function useSimulation() {
     },
     [selectedId]
   );
+
+  // Link fault injection (real API calls; the state update arrives in the
+  // response and via the WebSocket as usual).
+  const actLink = useCallback(async (pair: [string, string], block: boolean) => {
+    setError(null);
+    setScenario(null);
+    try {
+      const next = block
+        ? await api.blockLink(pair[0], pair[1])
+        : await api.restoreLink(pair[0], pair[1]);
+      setState(next);
+      setRestStatus("live");
+    } catch (err) {
+      if (err instanceof ApiError && err.status >= 500) setRestStatus("down");
+      setError(err instanceof Error ? err.message : "Unexpected error");
+    }
+  }, []);
 
   // Shared scenario runner: guards against duplicate runs, resets the
   // cancellation flag (Strict Mode's dev remount pre-trips it), releases the
@@ -241,6 +281,7 @@ export function useSimulation() {
 
       ctx.stage(`${leader.name} is the leader for term ${start.current_term} — crashing it next…`);
       setSelectedId(leader.id);
+      setSelectedLink(null);
       await ctx.wait(1600);
       if (ctx.cancelled()) return;
 
@@ -425,8 +466,11 @@ export function useSimulation() {
     error,
     clearError: () => setError(null),
     selectedId,
-    select: setSelectedId,
+    select: selectNode,
+    selectedLink,
+    selectLink,
     act,
+    actLink,
     scenario,
     scenarioActive,
     runLeaderFailure,

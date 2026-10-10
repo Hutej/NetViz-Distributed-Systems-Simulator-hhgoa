@@ -11,7 +11,7 @@ from ninja_extra import api_controller, http_get, http_post
 
 from .broadcast import broadcast_state
 from .engine import SimulationError, engine
-from .schemas import AddNodeRequest, NodeIdRequest, SimulationStateDict
+from .schemas import AddNodeRequest, LinkRequest, NodeIdRequest, SimulationStateDict
 
 
 def _run(operation: Callable[..., SimulationStateDict], *args, **kwargs) -> SimulationStateDict:
@@ -56,6 +56,16 @@ class SimulationController:
     def toggle_partition(self, payload: NodeIdRequest) -> SimulationStateDict:
         """Toggle network isolation for a node."""
         return _run(engine.toggle_partition, payload.node_id)
+
+    @http_post("/link/block")
+    def block_link(self, payload: LinkRequest) -> SimulationStateDict:
+        """Disable communication on the undirected link between two nodes."""
+        return _run(engine.block_link, payload.node_a, payload.node_b)
+
+    @http_post("/link/restore")
+    def restore_link(self, payload: LinkRequest) -> SimulationStateDict:
+        """Restore a previously blocked link."""
+        return _run(engine.restore_link, payload.node_a, payload.node_b)
 
     @http_post("/replicate")
     def replicate(self) -> SimulationStateDict:

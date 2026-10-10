@@ -89,8 +89,11 @@ export default function App() {
                 <Simulator
                   state={sim.state}
                   selectedId={sim.selectedId}
+                  selectedLink={sim.selectedLink}
                   onSelect={sim.select}
+                  onSelectLink={sim.selectLink}
                   onAction={sim.act}
+                  onToggleLink={sim.actLink}
                   scenarioRunning={sim.scenarioActive}
                   scenario={sim.scenario}
                   onOpenScenarios={() => navigate("scenarios")}

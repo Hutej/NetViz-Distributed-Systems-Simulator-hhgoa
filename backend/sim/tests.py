@@ -244,3 +244,143 @@ class IntegrityChainTests(SimpleTestCase):
         state = self.chain.reset()
         self.assertTrue(state["valid"])
         self.assertEqual(state["blocks"][1]["data"], "transfer: Alice sends 5 coins to Bob")
+
+
+class LinkFaultTests(SimpleTestCase):
+    """Per-link network fault injection and component-based connectivity."""
+
+    def setUp(self):
+        self.sim = SimulationEngine()
+
+    @staticmethod
+    def node(state, node_id):
+        return next(n for n in state["nodes"] if n["id"] == node_id)
+
+    def test_block_and_restore_link(self):
+        state = self.sim.block_link("A", "B")
+        self.assertEqual(state["blocked_links"], [["A", "B"]])
+        # Endpoints are normalized: (B, A) is the same undirected link.
+        with self.assertRaises(SimulationError):
+            self.sim.block_link("B", "A")
+        state = self.sim.restore_link("B", "A")
+        self.assertEqual(state["blocked_links"], [])
+        with self.assertRaises(SimulationError):
+            self.sim.restore_link("A", "B")
+
+    def test_invalid_link_requests(self):
+        with self.assertRaises(SimulationError):
+            self.sim.block_link("A", "A")
+        with self.assertRaises(SimulationError):
+            self.sim.block_link("A", "NOPE")
+        with self.assertRaises(SimulationError):
+            self.sim.restore_link("A", "NOPE")
+        self.assertEqual(self.sim.get_state()["blocked_links"], [])
+
+    def test_reachability_across_graph(self):
+        # Blocking only A-B leaves a path A-C-B, so connectivity is
+        # transitive through C and nothing is split yet.
+        state = self.sim.block_link("A", "B")
+        self.assertEqual(state["cluster"]["components"], [["A", "B", "C"]])
+        # Blocking A-C as well cuts every path to A: A is alone.
+        state = self.sim.block_link("A", "C")
+        self.assertEqual(state["cluster"]["components"], [["A"], ["B", "C"]])
+        self.assertEqual(self.node(state, "A")["reachable_peers"], [])
+        self.assertEqual(self.node(state, "B")["reachable_peers"], ["C"])
+        self.assertEqual(self.node(state, "C")["reachable_peers"], ["B"])
+        # Online is not the same as connected: A is online but cut off, and
+        # the (still-online) leader can no longer reach quorum.
+        self.assertFalse(self.node(state, "A")["partitioned"])
+        self.assertEqual(state["cluster"]["health"], "degraded")
+
+    def test_quorum_partition_via_links_still_elects(self):
+        # 5 nodes split into [A, B] and [C, D, E]; the 3-group has quorum (3).
+        self.sim.add_node()
+        self.sim.add_node()
+        for a in ("A", "B"):
+            for b in ("C", "D", "E"):
+                self.sim.block_link(a, b)
+        state = self.sim.start_election()
+        self.assertEqual(state["cluster"]["components"], [["A", "B"], ["C", "D", "E"]])
+        self.assertEqual(state["current_leader"], "C")
+        self.assertEqual(state["current_term"], 2)
+        # The new leader sits in a quorum-sized group, so the cluster is healthy.
+        self.assertEqual(state["cluster"]["health"], "healthy")
+
+    def test_no_quorum_partition_via_links_fails_election(self):
+        # 4 nodes split into two pairs; quorum is 3, so no group qualifies.
+        self.sim.add_node()
+        for a in ("A", "B"):
+            for b in ("C", "D"):
+                self.sim.block_link(a, b)
+        state = self.sim.start_election()
+        self.assertIsNone(state["current_leader"])
+        self.assertEqual(state["current_term"], 1)
+        self.assertFalse(state["cluster"]["quorum_available"])
+        self.assertIn("Election failed", state["recent_events"][-1]["description"])
+
+    def test_replication_through_active_path_only(self):
+        # 4 nodes: cut A and D off from B and C; only D remains reachable.
+        self.sim.add_node()  # D
+        state = self.sim.block_link("A", "B")
+        state = self.sim.block_link("A", "C")
+        state = self.sim.block_link("D", "B")
+        state = self.sim.block_link("D", "C")
+        state = self.sim.replicate()
+        # D received the entry via the still-active A-D link; B and C have no
+        # active network path and must not advance.
+        self.assertEqual(self.node(state, "A")["log_index"], 1)
+        self.assertEqual(self.node(state, "D")["log_index"], 1)
+        self.assertEqual(self.node(state, "B")["log_index"], 0)
+        self.assertEqual(self.node(state, "C")["log_index"], 0)
+        self.assertIn("B missed it (no active network path to the leader)",
+                      state["recent_events"][-1]["description"])
+        self.assertNotIn("B", {m["to"] for m in state["recent_messages"]})
+
+    def test_leader_cut_off_by_links_cannot_replicate(self):
+        self.sim.block_link("A", "B")
+        self.sim.block_link("A", "C")
+        with self.assertRaises(SimulationError):
+            self.sim.replicate()
+
+    def test_election_after_leader_crash_still_works_with_links(self):
+        self.sim.block_link("B", "C")
+        self.sim.crash("A")
+        state = self.sim.start_election()
+        # B and C can still reach each other via the leader... no direct link,
+        # but both are online and unpartitioned with only B-C blocked.
+        self.assertIsNone(state["current_leader"])
+        self.sim.restore_link("B", "C")
+        state = self.sim.start_election()
+        self.assertEqual(state["current_leader"], "B")
+
+    def test_reset_clears_link_faults(self):
+        self.sim.block_link("A", "B")
+        state = self.sim.reset()
+        self.assertEqual(state["blocked_links"], [])
+        self.assertEqual(state["cluster"]["components"], [["A", "B", "C"]])
+
+
+class LinkApiTests(SimpleTestCase):
+    def setUp(self):
+        engine.reset()
+
+    def post(self, path, body=None):
+        import json
+
+        return self.client.post(
+            f"/api/simulation/{path}",
+            data=json.dumps(body or {}),
+            content_type="application/json",
+        )
+
+    def test_link_block_and_restore_endpoints(self):
+        response = self.post("link/block", {"node_a": "A", "node_b": "B"})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["blocked_links"], [["A", "B"]])
+        response = self.post("link/block", {"node_a": "B", "node_b": "A"})
+        self.assertEqual(response.status_code, 400)
+        response = self.post("link/restore", {"node_a": "A", "node_b": "B"})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["blocked_links"], [])
+        response = self.post("link/block", {"node_a": "A", "node_b": "NOPE"})
+        self.assertEqual(response.status_code, 404)

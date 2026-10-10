@@ -20,7 +20,9 @@ import ClusterNode, { type ClusterNodeData } from "./ClusterNode";
 interface Props {
   state: SimulationState;
   selectedId: string | null;
+  selectedLink: [string, string] | null;
   onSelect: (id: string | null) => void;
+  onSelectLink: (pair: [string, string] | null) => void;
 }
 
 const nodeTypes = { cluster: ClusterNode };
@@ -50,7 +52,7 @@ const MINI_COLORS: Record<Role | "offline" | "isolated", string> = {
   isolated: "#f59e0b",
 };
 
-function Canvas({ state, selectedId, onSelect }: Props) {
+function Canvas({ state, selectedId, selectedLink, onSelect, onSelectLink }: Props) {
   const { fitView } = useReactFlow();
 
   const [positions, setPositions] = useState(layoutStore.positions);
@@ -71,34 +73,75 @@ function Canvas({ state, selectedId, onSelect }: Props) {
     [state.nodes, positions, selectedId]
   );
 
-  // Links only between reachable, online nodes. Edges touching the selected
-  // node get a teal highlight; edges along the leader are animated.
+  const blockedKey = (pair: [string, string]) => [...pair].sort().join("~");
+
+  // Communication edges. Active links (online, unpartitioned, not blocked)
+  // form the mesh; blocked links are drawn as red dashed but never as
+  // successful message paths. Edges touching the selected node/link get a
+  // teal highlight; edges along the leader are animated.
   const edges = useMemo<Edge[]>(() => {
+    const blocked = new Set(state.blocked_links.map(blockedKey));
     const active = state.nodes.filter(
       (n) => n.status === "online" && !n.partitioned
     );
     const result: Edge[] = [];
+
+    const pushEdge = (
+      a: string,
+      b: string,
+      isBlocked: boolean,
+      leaderLink: boolean,
+      endpointDown: boolean
+    ) => {
+      const isSelected =
+        selectedLink !== null && blockedKey(selectedLink) === blockedKey([a, b]);
+      const nodeSelected = selectedId === a || selectedId === b;
+      if (isBlocked) {
+        result.push({
+          id: `${a}-${b}`,
+          source: a,
+          target: b,
+          data: { pair: [a, b] },
+          style: {
+            stroke: isSelected ? "#2dd4bf" : endpointDown ? "#7f1d1d" : "#ef4444",
+            strokeWidth: isSelected || !endpointDown ? 2 : 1.5,
+            strokeDasharray: "6 4",
+            opacity: endpointDown ? 0.5 : 1,
+          },
+        });
+        return;
+      }
+      result.push({
+        id: `${a}-${b}`,
+        source: a,
+        target: b,
+        data: { pair: [a, b] },
+        animated: leaderLink,
+        style: {
+          stroke: nodeSelected || isSelected ? "#2dd4bf" : leaderLink ? "#34d399" : "#475569",
+          strokeWidth: nodeSelected || isSelected ? 2.5 : leaderLink ? 2 : 1.5,
+        },
+      });
+    };
+
     for (let i = 0; i < active.length; i++) {
       for (let j = i + 1; j < active.length; j++) {
         const a = active[i];
         const b = active[j];
         const leaderLink =
           state.current_leader === a.id || state.current_leader === b.id;
-        const selectedLink = selectedId === a.id || selectedId === b.id;
-        result.push({
-          id: `${a.id}-${b.id}`,
-          source: a.id,
-          target: b.id,
-          animated: leaderLink,
-          style: {
-            stroke: selectedLink ? "#2dd4bf" : leaderLink ? "#34d399" : "#475569",
-            strokeWidth: selectedLink ? 2.5 : leaderLink ? 2 : 1.5,
-          },
-        });
+        pushEdge(a.id, b.id, blocked.has(blockedKey([a.id, b.id])), leaderLink, false);
       }
     }
+    // Blocked links are always visible — even to offline/isolated endpoints.
+    for (const pair of state.blocked_links) {
+      const bothActive = active.some((n) => n.id === pair[0]) && active.some((n) => n.id === pair[1]);
+      if (bothActive) continue; // already rendered in the loop above
+      const endpointDown = true; // at least one endpoint is not communicating
+      pushEdge(pair[0], pair[1], true, false, endpointDown);
+    }
     return result;
-  }, [state.nodes, state.current_leader, selectedId]);
+  }, [state.nodes, state.current_leader, state.blocked_links, selectedId, selectedLink]);
 
   // Persist drags; ignore React Flow's internal selection changes (selection
   // is ours via onNodeClick/onPaneClick).
@@ -153,7 +196,13 @@ function Canvas({ state, selectedId, onSelect }: Props) {
       edges={edges}
       nodeTypes={nodeTypes}
       onNodeClick={(_, node) => onSelect(node.id)}
-      onPaneClick={() => onSelect(null)}
+      onEdgeClick={(_, edge) =>
+        onSelectLink((edge.data as { pair?: [string, string] } | undefined)?.pair ?? null)
+      }
+      onPaneClick={() => {
+        onSelect(null);
+        onSelectLink(null);
+      }}
       onNodesChange={onNodesChange}
       onInit={onInit}
       onMoveEnd={onMoveEnd}

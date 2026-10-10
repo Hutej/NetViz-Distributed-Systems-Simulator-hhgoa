@@ -10,6 +10,8 @@ export interface ClusterNodeState {
   term: number;
   log_index: number;
   partitioned: boolean;
+  /** Peers reachable through the backend's shared connectivity graph. */
+  reachable_peers: string[];
 }
 
 export interface SimMessage {
@@ -35,6 +37,8 @@ export interface ClusterInfo {
   quorum_size: number;
   quorum_available: boolean;
   health: string;
+  /** Connected components of the communication graph (node IDs). */
+  components: string[][];
 }
 
 export interface SimulationState {
@@ -42,6 +46,8 @@ export interface SimulationState {
   current_leader: string | null;
   current_term: number;
   total_messages: number;
+  /** Disabled undirected links, each pair sorted. */
+  blocked_links: [string, string][];
   recent_messages: SimMessage[];
   recent_events: SimEvent[];
   cluster: ClusterInfo;

@@ -39,6 +39,10 @@ export const api = {
   recover: (nodeId: string) => post("/recover", { node_id: nodeId }),
   startElection: () => post("/election"),
   togglePartition: (nodeId: string) => post("/partition", { node_id: nodeId }),
+  blockLink: (nodeA: string, nodeB: string) =>
+    post("/link/block", { node_a: nodeA, node_b: nodeB }),
+  restoreLink: (nodeA: string, nodeB: string) =>
+    post("/link/restore", { node_a: nodeA, node_b: nodeB }),
   replicate: () => post("/replicate"),
   reset: () => post("/reset"),
   leaderFailure: () => post("/scenarios/leader-failure"),
