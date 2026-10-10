@@ -1,73 +1,121 @@
-# NETVIZ — Distributed Systems Playground
+# NetViz — Interactive Distributed Systems & Blockchain Simulator
 
-An interactive, browser-based simulator for exploring how distributed systems behave under failure. Watch a simulated cluster elect leaders, replicate logs, crash, recover, and split into network partitions — and see every consequence propagate through the UI in real time.
+NetViz is an educational engineering playground for exploring how distributed systems behave under failure. Break a simulated cluster — crash its leader, cut network links, watch elections, quorum and replication play out — then step into a second lab where three simulated peers run a toy proof-of-work blockchain, fork it, and reconcile it.
 
-NETVIZ demonstrates the problems distributed-consensus algorithms exist to solve: **leader failure, elections, quorum, replication reachability, and network partitions** — using a deliberately simplified, deterministic educational model (see [The educational model](#the-educational-model-simplified-raft)) rather than a full Raft implementation.
+It exists to make two ideas tangible:
 
-> **This is a local single-process simulation, not a real distributed cluster.** All "nodes" are data structures in one Django process. It is built for learning and demonstration, not for production use.
+- **Distributed systems**: why a crashed leader leaves a gap, why elections need a reachable majority (quorum), why network partitions cause data loss, and how replication determines who knows what.
+- **Blockchain mechanics**: how SHA-256-linked blocks, proof-of-work mining, competing forks, and longest-chain reconciliation actually work — and how hashes let you detect tampering.
 
-## Features
-
-- **Live network canvas** (React Flow): node cards showing ID, role, status, term, log index, and partition state; links only between reachable online nodes, animated along the leader's edges.
-- **Full manual control**: add nodes, crash/recover nodes, force leader elections, isolate/heal network partitions, replicate log entries, reset the cluster.
-- **Leader Failure Demo**: a staged, step-by-step walkthrough — identify the leader, crash it, observe the leaderless cluster, watch an election run, and see the new leader take over. Every step is a real API call against real backend state.
-- **Educational result panels**: every scenario ends with a *What happened / Why it happened / Before → After* explanation, built from actual backend snapshots — node roles, terms, log indexes and events — plus a plain-language note of the underlying concept (and an honest "simplified, single-process" disclaimer).
-- **Integrity Lab**: an isolated SHA-256 hash-chain demo — three linked blocks, tamper with one, and see validation pinpoint the first invalid block. Backend-computed hashes (Python `hashlib`), no mining/peers/forks; not a cryptocurrency.
-- **Real-time updates**: every REST mutation is broadcast over WebSockets to all connected dashboards.
-- **Observability UI**: live cluster statistics (leader, term, health, quorum), a readable event log (elections, crashes, recoveries, partitions, replication), and a recent-messages view (heartbeats, vote requests, votes, replication).
-- **Validation**: impossible transitions are rejected with clear errors (crashing an offline node, recovering an unknown node, replicating without a leader…).
+> **This is an educational simulation.** It is not production distributed infrastructure, not a complete Raft implementation, not Bitcoin, and not a real cryptocurrency. Every "node" and "peer" is a data structure inside one Django process; there are no independent machines, no real networks, no wallets, and no financial value. It was built for learning and demonstration.
 
 ## Screenshots
 
-> Placeholders — captures are pending. After running the app, save PNGs to `docs/screenshots/` and this section will show them.
+**Overview** — the starting screen, with live cluster state and guided experiments:
 
-| Healthy 3-node cluster | Leader Failure Demo, mid-election |
-| --- | --- |
-| `docs/screenshots/dashboard.png` | `docs/screenshots/leader-failure-demo.png` |
-| *Leader Node A with animated links to followers B and C* | *Crashed leader, amber election banner, event log updating* |
+![NetViz overview screen with guided experiments](docs/screenshots/overview.png)
 
-| Network partition isolated | Election failure (no quorum) |
-| --- | --- |
-| `docs/screenshots/partition.png` | `docs/screenshots/quorum-failure.png` |
-| *Node B cut off from the mesh, no edges cross the partition* | *Red banner showing the actual backend failure event* |
-| `docs/screenshots/integrity-lab.png` | `docs/screenshots/insight-panel.png` |
-| *Hash-chain after tampering, first invalid block flagged* | *Educational What/Why/Before→After panel from a real run* |
+**Distributed systems simulator** — a selected leader node with inspector, controls, and live stats:
+
+![Simulator with Node A selected and its inspector open](docs/screenshots/simulator-with-selected-node.png)
+
+**Guided scenario result** — a Leader Failure run with the real before → after state from the backend:
+
+![Leader Failure scenario result showing before and after node states](docs/screenshots/leader-failure.png)
+
+**Blockchain / Integrity Lab** — three simulated peers with independent chains:
+
+![Integrity Lab showing three blockchain peers and their chains](docs/screenshots/integrity-1.png)
+
+**Blockchain / Integrity Lab** — the guided fork experiment result and working controls:
+
+![Integrity Lab showing the fork experiment result and controls](docs/screenshots/integrity-2.png)
+
+## Contents
+
+1. [What you can do](#what-you-can-do)
+2. [Architecture](#architecture)
+3. [Technology stack](#technology-stack)
+4. [Getting started on Windows](#getting-started-on-windows)
+5. [Commands and tests](#commands-and-tests)
+6. [API overview](#api-overview)
+7. [How the simulation works — and what it simplifies](#how-the-simulation-works--and-what-it-simplifies)
+8. [Project structure](#project-structure)
+9. [How this project was built](#how-this-project-was-built)
+10. [More documentation](#more-documentation)
+
+## What you can do
+
+### Distributed-systems simulator
+
+- **Live network canvas** (React Flow): node cards with role, status, term, log index and isolation state; draggable nodes, a connectivity inspector, legend, and themed minimap.
+- **Node operations**: add nodes, crash and recover them, and watch leadership, health and quorum respond.
+- **Leader elections**: quorum-aware — a candidate can only win from a connected group large enough to reach `floor(n/2) + 1` nodes; failed elections honestly leave the cluster without a leader.
+- **Network faults**: isolate a whole node, or block/restore individual links between two nodes. Connected components and reachable peers are computed by the backend, and a node being online is explicitly distinguished from being able to reach the leader.
+- **Replication**: the leader replicates a log entry to reachable followers — and the event log records exactly which followers received it and which missed it, with reasons (offline, isolated, or no active network path).
+- **Live updates**: every REST mutation is pushed over a WebSocket to all connected dashboards.
+- **Observability**: event log, message stream (heartbeats, votes, replication), cluster stats, and a network panel showing connected components and quorum reachability.
+
+### Guided scenarios (with real before/after explanations)
+
+1. **Leader Failure** — crash the leader, watch the election, see the new leader.
+2. **Network Partition and Replication** — isolate a follower, replicate, and see why it misses the entry.
+3. **Log Replication** — one entry to every reachable follower, with per-follower outcomes.
+
+Each scenario ends with a *What happened / Why it happened / Before → after* panel built entirely from actual backend snapshots — no fabricated outcomes.
+
+### Blockchain & Integrity Lab
+
+- **Three simulated peers**, each with its own local chain, pending transaction pool, isolation flag, and validation result.
+- **Transactions**: submit an illustrative record (sender, recipient, positive amount) to a peer; it propagates only to peers that can communicate.
+- **Toy proof-of-work mining**: blocks are mined with SHA-256 over canonical JSON until the hash starts with two zeros (bounded nonce search); every block reports its real nonce-attempt count.
+- **Forks**: isolate a peer and mine on both sides of the partition to create genuinely competing branches, all independently inspectable.
+- **Reconciliation**: a deterministic longest-valid-chain rule (ties break by smallest tip hash, then peer name); losing branches are reported as orphaned blocks.
+- **Integrity**: tamper with a specific peer's non-genesis block and validation pinpoints the first invalid block and the exact reason (hash mismatch, broken link, bad index, invalid structure, or unmet proof-of-work).
 
 ## Architecture
 
-One Django process owns the simulation engine — the **single source of truth**. The frontend holds no independent cluster state: it derives everything from REST responses and WebSocket pushes.
+One Django process hosts two **separate** in-memory simulation services: the distributed-systems engine and the blockchain engine. They share no mutable state and serve different lessons. The cluster simulation streams live updates over a WebSocket; the blockchain lab is REST-only.
 
 ```mermaid
 graph LR
     subgraph Browser
-        UI["React Dashboard<br/>React Flow canvas · stats · event log · messages"]
-        HOOK["useSimulation hook<br/>(single state store)"]
+        UI["React / TypeScript frontend<br/>React Flow canvas · inspectors · scenario & lab screens"]
     end
 
     subgraph "Django (single process, Daphne ASGI)"
-        REST["REST API — Django Ninja Extra<br/>/api/simulation/…"]
-        ENGINE["Simulation Engine<br/>in-memory cluster state, thread-safe,<br/>simulated nodes A, B, C, …"]
-        CONSUMER["Channels WebSocket consumer<br/>/ws/simulation/"]
+        REST["Django Ninja Extra REST API<br/>/api/simulation/… and /api/integrity/…"]
+        ENGINE["Distributed-systems engine<br/>nodes · links · connectivity · elections<br/>(in-memory, thread-safe)"]
+        CHAIN["Blockchain engine<br/>peers A/B/C · chains · PoW mining<br/>(in-memory, REST-only)"]
+        WS["Channels WebSocket consumer<br/>/ws/simulation/"]
     end
 
-    HOOK -- "fetch (JSON mutations)" --> REST
-    REST -- "calls shared engine op" --> ENGINE
-    ENGINE -- "group_send via channel layer<br/>(after every mutation)" --> CONSUMER
-    CONSUMER -- "WebSocket broadcast" --> HOOK
-    HOOK -- "state on connect" --> CONSUMER
+    UI -- "fetch (JSON)" --> REST
+    REST --> ENGINE
+    REST --> CHAIN
+    ENGINE -- "broadcast after every mutation" --> WS
+    WS -- "live cluster state" --> UI
+    UI -- "polls after each action" --> CHAIN
 ```
 
 ## Technology stack
 
-| Layer | Tools |
+| Layer | Technology |
 | --- | --- |
-| Frontend | React 19, TypeScript (strict), Vite, Tailwind CSS v4, [@xyflow/react](https://xyflow.com) (network canvas), Motion (animation), lucide-react (icons) |
-| Backend | Python, Django, Django Ninja + Django Ninja Extra (REST API), Django Channels + Daphne (WebSockets, ASGI) |
-| State | In-memory only — no database, no auth, no external services |
+| Frontend | React 19, TypeScript, Vite |
+| Styling | Tailwind CSS v4 |
+| Graph visualization | @xyflow/react (React Flow) |
+| Animation | Motion |
+| Icons | lucide-react |
+| Backend | Django, Django Ninja, Django Ninja Extra |
+| Real-time | Django Channels + Daphne (WebSocket) |
+| Hashing | Python `hashlib` (SHA-256) |
 
-## Setup (Windows)
+No database, no authentication, no external services — everything is in-memory by design.
 
-### Backend (terminal 1)
+## Getting started on Windows
+
+**Terminal 1 — backend:**
 
 ```bat
 cd backend
@@ -76,12 +124,9 @@ venv\Scripts\pip install -r requirements.txt
 venv\Scripts\python manage.py runserver
 ```
 
-The API is now at `http://127.0.0.1:8000` (health check: `http://127.0.0.1:8000/api/health`).
+The API is then served at `http://127.0.0.1:8000` (health check: `http://127.0.0.1:8000/api/health`).
 
-- Python 3.13 was used during development; any modern Python 3.11+ should work.
-- The Vite dev server proxies `/api` and `/ws`, so no CORS setup is needed.
-
-### Frontend (terminal 2)
+**Terminal 2 — frontend:**
 
 ```bat
 cd frontend
@@ -89,95 +134,115 @@ npm install
 npm run dev
 ```
 
-Open the URL Vite prints (by default `http://localhost:5173`). If port 5173 is already in use Vite automatically picks 5174.
+Open the URL Vite prints in the terminal — usually `http://localhost:5173`. If that port is already in use, Vite picks the next free port (e.g. 5174) and prints it; the app's internal proxy to the backend works the same on any port.
 
-## Checks and tests
+## Commands and tests
 
 ```bat
-:: Backend — system check and the full test suite
+:: Backend — system check and full test suite
 cd backend
 venv\Scripts\python manage.py check
 venv\Scripts\python manage.py test
 
-:: Frontend — type-check and production build
+:: Frontend — TypeScript check and production build
 cd frontend
 npm run build
 
-:: Optional — end-to-end WebSocket broadcast check (needs the dev server running)
+:: Optional — end-to-end WebSocket broadcast check (backend must be running)
 cd backend
 venv\Scripts\python scripts\ws_check.py
 ```
 
-## The educational model (simplified Raft)
+**Common issues**
 
-NETViz is a **teaching model**, not a real consensus implementation. The simplifications are intentional so that every result is deterministic and observable.
-
-- **Cluster**: starts with three nodes — A (leader), B and C (followers), all online, term 1. Nodes can be added at runtime.
-- **Quorum**: `floor(total node count / 2) + 1` counting *all* nodes, including offline ones. With 3 nodes a quorum is 2.
-- **Elections**: eligible voters are nodes that are online and not isolated. The candidate with the **lexicographically smallest ID** deterministically wins (each eligible node casts its vote; the smallest eligible node stands). The term increments **only on success**. If fewer eligible nodes are reachable than quorum requires, the election fails, the term stays unchanged, and the cluster explicitly has **no leader** — nothing is faked.
-- **Leader failure**: a crashed leader immediately stops being the current leader; the "Leader" statistic shows *None* until a successful election.
-- **Partitions**: for the MVP, a partition isolates **one selected node** from all others. No messages involving that node are delivered across the partition, replication skips it, and it cannot vote. Healing restores connectivity. An isolated leader cannot replicate and the cluster is considered degraded.
-- **Replication**: the leader increments its log index and pushes the entry to *reachable online followers* only. Log entries are just an index — there is no payload.
-
-### In-memory state limitations
-
-- Everything lives in one Python process. **Restarting the server (or letting the auto-reloader reload it after a code change) resets the simulation** to the initial three-node cluster.
-- Two browser tabs connected to the same server share one cluster (that's the point of the WebSocket broadcast), but two separately started servers are completely independent worlds.
-- Nothing is persisted: no database, no save/restore, no authentication.
+| Symptom | Fix |
+| --- | --- |
+| `ImproperlyConfigured` or missing modules on startup | Install the requirements into the venv (see above). |
+| Dashboard stuck on "Connecting…", REST pill red | The backend isn't running on port 8000 — start terminal 1. |
+| Vite prints a port other than 5173 | Port was occupied; use the URL Vite prints — everything works identically. |
+| `WinError 10048` when starting Django | Port 8000 is taken — stop the other process first. |
+| Cluster/blockchain state resets unexpectedly | Expected: all state is in-memory and lives in the server process. A restart (or Django's auto-reloader after a code change) starts fresh. |
 
 ## API overview
 
-All operations return the complete simulation state (nodes, leader, term, cluster health, recent events and messages) as JSON.
+All mutations return the complete updated state. Domain errors return JSON `{"detail": "..."}` with status 400 (invalid/redundant operation) or 404 (unknown node/peer); malformed request bodies return 422. Full details in [docs/API.md](docs/API.md).
 
-| Method | Path | Purpose |
+| Method | Route | Purpose |
 | --- | --- | --- |
-| GET | `/api/health` | Backend health probe |
-| GET | `/api/integrity/state` | Hash-chain integrity demo (see Integrity Lab screen) |
-| POST | `/api/integrity/tamper` | Change a non-genesis block's data (index, data) |
-| POST | `/api/integrity/validate` | Recompute and verify every hash and link |
-| POST | `/api/integrity/reset` | Rebuild the untampered hash chain |
-| GET | `/api/simulation/state` | Complete current state |
-| POST | `/api/simulation/nodes` | Add a node (`node_id` optional — auto-generated if omitted) |
+| GET | `/api/health` | Health probe |
+| GET | `/api/simulation/state` | Complete cluster state (nodes, leader, connectivity, events) |
+| POST | `/api/simulation/nodes` | Add a node (`node_id` optional) |
 | POST | `/api/simulation/crash` | Crash an online node (`node_id`) |
 | POST | `/api/simulation/recover` | Recover an offline node (`node_id`) |
-| POST | `/api/simulation/election` | Run a simplified leader election |
-| POST | `/api/simulation/partition` | Toggle network isolation for a node (`node_id`) |
-| POST | `/api/simulation/replicate` | Replicate a log entry to reachable online followers |
-| POST | `/api/simulation/reset` | Reset to the initial three-node cluster |
-| POST | `/api/simulation/scenarios/leader-failure` | One-shot demo: crash the leader and elect a new one |
+| POST | `/api/simulation/election` | Run a quorum-aware leader election |
+| POST | `/api/simulation/partition` | Toggle isolation of a node (`node_id`) |
+| POST | `/api/simulation/link/block` | Disable the link between two nodes (`node_a`, `node_b`) |
+| POST | `/api/simulation/link/restore` | Restore a blocked link |
+| POST | `/api/simulation/replicate` | Replicate a log entry to reachable followers |
+| POST | `/api/simulation/reset` | Reset the cluster to its initial state |
+| POST | `/api/simulation/scenarios/leader-failure` | One-shot leader-failure demo |
+| GET | `/api/integrity/state` | Full blockchain state (peers, chains, validation) |
+| POST | `/api/integrity/transaction` | Submit a transaction (`sender`, `recipient`, `amount`, `peer`) |
+| POST | `/api/integrity/mine` | Mine a peer's pending transactions with toy PoW (`peer`) |
+| POST | `/api/integrity/peer` | Isolate or reconnect a peer (`peer`, `isolated`) |
+| POST | `/api/integrity/validate` | Validate a peer's chain (`peer`) |
+| POST | `/api/integrity/tamper` | Change a non-genesis block's data on one peer (`index`, `data`, `peer`) |
+| POST | `/api/integrity/reconcile` | Deterministic longest-valid-chain reconciliation |
+| POST | `/api/integrity/reset` | Reset all peers to identical valid histories |
 
-Invalid requests return structured errors, e.g. `404 {"detail": "Node 'Z' does not exist."}` or `400 {"detail": "Node 'B' is already offline."}`.
+**WebSocket:** `ws://localhost:8000/ws/simulation/` — live cluster-simulation state (initial snapshot on connect, then a broadcast after every mutation). The blockchain lab is intentionally REST-only and does not use this socket.
 
-**WebSocket:** `ws://localhost:8000/ws/simulation/` (via the Vite proxy, `/ws/simulation/`). On connect the server sends the current state immediately; after every successful REST mutation the new state is broadcast to all connected clients. The dashboard reconnects automatically (up to 5 s backoff) if the socket drops.
+## How the simulation works — and what it simplifies
 
-## Known limitations
+### Distributed systems
 
-- Single-process in-memory state (see above) — no persistence, no multi-server scaling.
-- Elections are instant and deterministic; there are no election timers, no candidate re-tries, no split-brain scenarios beyond single-node isolation.
-- Log entries carry an index only, no contents.
-- The event log keeps the last 50 events; the message list the last 25 messages.
-- Dev-server security posture: `DEBUG=True`, a placeholder secret key, `ALLOWED_HOSTS = ["*"]`. **Do not expose this to the internet** — it was never meant to run anywhere but your machine.
-- No frontend unit tests yet (the staged demo and API integration were verified manually and via the backend test suite); the frontend has a strict TypeScript build instead.
+- One in-memory engine holds the whole cluster behind a lock; a single process, single source of truth.
+- Connectivity is a real graph calculation: BFS over online, non-isolated nodes with unblocked links produces the connected components, per-node reachable peers, and quorum availability that every other feature consumes.
+- Elections are simplified and deterministic: eligible nodes are online, un-isolated, and reachable; the winner is the smallest node ID inside a connected group large enough for quorum. There are no election timers, retries, or split-brain resolution — the cluster has at most one leader by design.
+- The model is **not** a full Raft implementation, and the nodes are not independent machines.
 
-## Troubleshooting
+### Blockchain
 
-| Symptom | Cause / fix |
-| --- | --- |
-| Dashboard stuck on "Connecting to the simulation…", REST pill red | The Django backend is not running on port 8000 — start it (terminal 1). |
-| Frontend loads but nothing updates, WS pill red/disconnected | The WebSocket couldn't connect. It reconnects automatically with backoff; check that the backend runs and that nothing else proxies `/ws`. |
-| `[vite] ws proxy error: ECONNABORTED` in the terminal | Harmless dev noise: the Django process (re)started while Vite's proxy held an open WebSocket. The UI reconnects on its own. |
-| `WinError 10048` on `manage.py runserver` | Port 8000 is already in use — stop the other server first (or pick another port, but then update the Vite proxy target). |
-| Vite printed a port other than 5173 | Port 5173 was occupied; Vite auto-bumped. The proxy still points at Django — everything keeps working. |
-| `ImproperlyConfigured: ninja_extra app is not installed` | Virtual environment missing packages: run `venv\Scripts\pip install -r requirements.txt` inside `backend/`. |
-| Simulation resets after a random change | The Django auto-reloader restarted the server (it watches files). This is expected in-memory behavior, not a bug. |
+- Three simulated peers — data structures in the same process, not independent machines.
+- Blocks are SHA-256-linked over canonical JSON, and mining uses a **fixed toy difficulty** (two leading hex zeros) with a bounded nonce search — an educational stand-in for Bitcoin-style mining, not a cryptocurrency.
+- Reconciliation implements longest-valid-chain selection with a documented deterministic tie-break. It does not implement the full Bitcoin protocol: no public-key signatures, no wallet or balance checks, no transaction economics, no peer discovery, and no real network.
+- Hash validation demonstrates **tamper detection**. A hash proves that content is unchanged; it does not authenticate who created a transaction, and it does not make a system secure on its own.
+- Known implementation limits, stated plainly: orphaned transactions are dropped rather than returned to the pool, mining races are not modelled, and difficulty is fixed.
 
-## How this project is built: voice-driven development
+### Development environment
 
-NETViz is developed with a **voice-first workflow**: requirements and review feedback are dictated with [Wispr Flow](https://wisprflow.ai) (voice-to-text dictation) and passed to [Pi](https://github.com/earendil-works/pi-coding-agent), an agent-based coding assistant that runs in the terminal. Pi reads the repository, writes and edits the code, runs the Django tests and the frontend build, and reports results back; the human reviews the diff and dictates the next step. This repo is therefore both a distributed-systems playground and a demonstration of planning, coding, testing, and verification done end-to-end through natural-language voice interaction.
+The Django server runs with `DEBUG = True`, a placeholder development secret key, and permissive host settings. This is deliberate for a local educational tool — do not expose it to the internet, and don't mistake it for production configuration.
 
-## Repository layout
+## Project structure
 
 ```
-frontend/   Vite + React + TypeScript dashboard (canvas, controls, stats, logs)
-backend/    Django project (natives/) + simulation app (sim/) + E2E WS checker (scripts/)
+frontend/            React 19 + TypeScript + Vite app
+  src/api/           typed clients for the simulation & blockchain APIs
+  src/components/    canvas, inspector, panels, shell
+  src/hooks/         shared state + WebSocket/scenario orchestration
+  src/screens/       Overview, Simulator, Scenario Lab, Timeline, Learn, Integrity Lab
+backend/
+  natives/           Django project (settings, urls, ASGI, API registration)
+  sim/               simulation engines, schemas, controllers, tests
+    engine.py        distributed-systems engine (single source of truth)
+    chain.py         blockchain simulation service
+    controllers.py   /api/simulation endpoints — thin wrappers over the engine
+    chain_controller.py  /api/integrity endpoints
+  scripts/           ws_check.py — WebSocket end-to-end verification
+docs/                architecture, API reference, development & release notes
 ```
+
+## How this project was built
+
+NetViz was developed with a voice-first workflow: requirements and review feedback were largely dictated with [Wispr Flow](https://wisprflow.ai) and handed to [Pi](https://github.com/earendil-works/pi-coding-agent), an agent-based coding assistant running in the terminal, which planned, wrote, and refactored the code across the frontend and backend. Some longer specifications were pasted into Pi as text rather than spoken. Every change was then reviewed and verified the ordinary way — reading the diff, running the Django test suite, the TypeScript build, WebSocket checks, and manual browser testing.
+
+## Demo video
+
+> **Pending** — the final product demo video has not been uploaded yet. The link will be inserted here when ready.
+
+## More documentation
+
+- [Architecture](docs/ARCHITECTURE.md) — how the engines, API and frontend fit together.
+- [API reference](docs/API.md) — every route, request body, and error behaviour.
+- [Development guide](docs/DEVELOPMENT.md) — setup, testing, and troubleshooting on Windows.
+- [Release checklist](docs/RELEASE_CHECKLIST.md) — what remains before final submission.
