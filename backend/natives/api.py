@@ -1,6 +1,8 @@
 from ninja_extra import NinjaExtraAPI, api_controller, http_get
 
-api = NinjaExtraAPI(title="Natives API")
+from sim.controllers import SimulationController
+
+api = NinjaExtraAPI(title="NetViz API")
 
 
 @api_controller("/")
@@ -11,3 +13,4 @@ class HealthController:
 
 
 api.register_controllers(HealthController)
+api.register_controllers(SimulationController)
