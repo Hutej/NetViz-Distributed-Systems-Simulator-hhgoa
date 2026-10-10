@@ -3,12 +3,19 @@ import {
   FlaskConical,
   GraduationCap,
   LayoutDashboard,
+  Link2,
   LucideIcon,
   Network,
   X,
 } from "lucide-react";
 
-export type Screen = "overview" | "simulator" | "scenarios" | "timeline" | "learn";
+export type Screen =
+  | "overview"
+  | "simulator"
+  | "scenarios"
+  | "timeline"
+  | "learn"
+  | "integrity";
 
 interface NavItem {
   id: Screen;
@@ -23,6 +30,7 @@ const ITEMS: NavItem[] = [
   { id: "scenarios", label: "Scenario Lab", icon: FlaskConical, hint: "Guided experiments" },
   { id: "timeline", label: "Event Timeline", icon: Activity, hint: "What happened so far" },
   { id: "learn", label: "Learn", icon: GraduationCap, hint: "Key concepts explained" },
+  { id: "integrity", label: "Integrity", icon: Link2, hint: "Hash-chain integrity demo" },
 ];
 
 interface Props {

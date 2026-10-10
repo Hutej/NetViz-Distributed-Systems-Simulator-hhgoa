@@ -11,6 +11,8 @@ NETVIZ demonstrates the problems distributed-consensus algorithms exist to solve
 - **Live network canvas** (React Flow): node cards showing ID, role, status, term, log index, and partition state; links only between reachable online nodes, animated along the leader's edges.
 - **Full manual control**: add nodes, crash/recover nodes, force leader elections, isolate/heal network partitions, replicate log entries, reset the cluster.
 - **Leader Failure Demo**: a staged, step-by-step walkthrough — identify the leader, crash it, observe the leaderless cluster, watch an election run, and see the new leader take over. Every step is a real API call against real backend state.
+- **Educational result panels**: every scenario ends with a *What happened / Why it happened / Before → After* explanation, built from actual backend snapshots — node roles, terms, log indexes and events — plus a plain-language note of the underlying concept (and an honest "simplified, single-process" disclaimer).
+- **Integrity Lab**: an isolated SHA-256 hash-chain demo — three linked blocks, tamper with one, and see validation pinpoint the first invalid block. Backend-computed hashes (Python `hashlib`), no mining/peers/forks; not a cryptocurrency.
 - **Real-time updates**: every REST mutation is broadcast over WebSockets to all connected dashboards.
 - **Observability UI**: live cluster statistics (leader, term, health, quorum), a readable event log (elections, crashes, recoveries, partitions, replication), and a recent-messages view (heartbeats, vote requests, votes, replication).
 - **Validation**: impossible transitions are rejected with clear errors (crashing an offline node, recovering an unknown node, replicating without a leader…).
@@ -28,6 +30,8 @@ NETVIZ demonstrates the problems distributed-consensus algorithms exist to solve
 | --- | --- |
 | `docs/screenshots/partition.png` | `docs/screenshots/quorum-failure.png` |
 | *Node B cut off from the mesh, no edges cross the partition* | *Red banner showing the actual backend failure event* |
+| `docs/screenshots/integrity-lab.png` | `docs/screenshots/insight-panel.png` |
+| *Hash-chain after tampering, first invalid block flagged* | *Educational What/Why/Before→After panel from a real run* |
 
 ## Architecture
 
@@ -128,6 +132,10 @@ All operations return the complete simulation state (nodes, leader, term, cluste
 | Method | Path | Purpose |
 | --- | --- | --- |
 | GET | `/api/health` | Backend health probe |
+| GET | `/api/integrity/state` | Hash-chain integrity demo (see Integrity Lab screen) |
+| POST | `/api/integrity/tamper` | Change a non-genesis block's data (index, data) |
+| POST | `/api/integrity/validate` | Recompute and verify every hash and link |
+| POST | `/api/integrity/reset` | Rebuild the untampered hash chain |
 | GET | `/api/simulation/state` | Complete current state |
 | POST | `/api/simulation/nodes` | Add a node (`node_id` optional — auto-generated if omitted) |
 | POST | `/api/simulation/crash` | Crash an online node (`node_id`) |

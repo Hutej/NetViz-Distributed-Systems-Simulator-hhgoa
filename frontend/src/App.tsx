@@ -3,6 +3,7 @@ import { Loader2, TriangleAlert, X } from "lucide-react";
 
 import Header from "./components/Header";
 import Sidebar, { type Screen } from "./components/Sidebar";
+import IntegrityLab from "./screens/IntegrityLab";
 import Learn from "./screens/Learn";
 import Overview from "./screens/Overview";
 import ScenarioLabScreen, { type ScenarioKind } from "./screens/ScenarioLabScreen";
@@ -105,6 +106,7 @@ export default function App() {
               )}
               {screen === "timeline" && <Timeline state={sim.state} />}
               {screen === "learn" && <Learn />}
+              {screen === "integrity" && <IntegrityLab />}
             </>
           )}
         </main>

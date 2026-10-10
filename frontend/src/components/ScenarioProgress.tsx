@@ -1,5 +1,6 @@
 import { ArrowLeft, CheckCircle2, FlaskConical, Loader2, TriangleAlert } from "lucide-react";
 
+import ScenarioInsight from "./ScenarioInsight";
 import type { ScenarioStatus } from "../hooks/useSimulation";
 
 interface Props {
@@ -46,6 +47,7 @@ export default function ScenarioProgress({ scenario, onOpenScenarios }: Props) {
         <p className={`mt-1 text-sm leading-snug ${TEXT[scenario.phase]}`}>
           {scenario.message}
         </p>
+        {scenario.insight && <ScenarioInsight insight={scenario.insight} />}
       </div>
       {!running && (
         <button

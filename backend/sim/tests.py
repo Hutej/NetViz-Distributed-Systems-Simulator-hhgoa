@@ -203,3 +203,44 @@ class SimulationApiTests(SimpleTestCase):
         response = self.client.get("/api/health")
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json(), {"status": "ok"})
+
+
+class IntegrityChainTests(SimpleTestCase):
+    """Hash-chain integrity demo (isolated from the cluster engine)."""
+
+    def setUp(self):
+        from .chain import ChainError, IntegrityChain
+
+        self.chain = IntegrityChain()
+        self.ChainError = ChainError
+
+    def test_initial_chain_is_valid(self):
+        state = self.chain.get_state()
+        self.assertEqual(len(state["blocks"]), 3)
+        self.assertTrue(state["valid"])
+        self.assertIsNone(state["first_invalid"])
+        for previous, block in zip(state["blocks"], state["blocks"][1:]):
+            self.assertEqual(block["previous_hash"], previous["hash"])
+
+    def test_tampering_invalidates_at_first_bad_block(self):
+        state = self.chain.tamper(1, "transfer: Alice sends 500 coins to Eve")
+        self.assertFalse(state["valid"])
+        self.assertEqual(state["first_invalid"], 1)
+        self.assertIn("no longer matches", state["reason"])
+        # The stored hashes still link — only content verification fails.
+        self.assertEqual(
+            state["blocks"][2]["previous_hash"], state["blocks"][1]["hash"]
+        )
+
+    def test_genesis_and_unknown_index_rejected(self):
+        with self.assertRaises(self.ChainError):
+            self.chain.tamper(0, "nope")
+        with self.assertRaises(self.ChainError):
+            self.chain.tamper(99, "nope")
+        self.assertTrue(self.chain.get_state()["valid"])
+
+    def test_reset_restores_validity(self):
+        self.chain.tamper(1, "transfer: Alice sends 500 coins to Eve")
+        state = self.chain.reset()
+        self.assertTrue(state["valid"])
+        self.assertEqual(state["blocks"][1]["data"], "transfer: Alice sends 5 coins to Bob")

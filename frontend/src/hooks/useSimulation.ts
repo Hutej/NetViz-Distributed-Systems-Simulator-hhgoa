@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { api, ApiError } from "../api/client";
-import type { SimulationState } from "../api/types";
+import type { ClusterNodeState, SimulationState } from "../api/types";
+import type { ScenarioInsight } from "../components/ScenarioInsight";
 
 export type Connection = "connecting" | "live" | "down";
 
@@ -20,15 +21,17 @@ export interface ScenarioStatus {
   name: string;
   phase: "running" | "done" | "failed";
   message: string;
+  /** Educational explanation built from real before/after snapshots. */
+  insight?: ScenarioInsight;
 }
 
 interface ScenarioContext {
   /** Narrate the current stage (banner updates immediately). */
   stage: (message: string) => void;
-  /** End the scenario successfully with a factual summary. */
-  finish: (message: string) => void;
+  /** End the scenario successfully; insight explains the real result. */
+  finish: (message: string, insight?: ScenarioInsight) => void;
   /** Abort the sequence and show the actual failure. */
-  fail: (message: string) => void;
+  fail: (message: string, insight?: ScenarioInsight) => void;
   /** True when the component unmounted mid-run. */
   cancelled: () => boolean;
   /** Pause so an intermediate state becomes visible. */
@@ -37,6 +40,31 @@ interface ScenarioContext {
   state: () => SimulationState;
   /** Apply a mutation response to the app state (REST + WS arrive anyway). */
   apply: (next: SimulationState) => void;
+}
+
+// Per-node evidence summaries used in the before/after tables.
+function roleEvidence(n: ClusterNodeState): string {
+  return `${n.role} · ${n.status} · term ${n.term}`;
+}
+
+function logEvidence(n: ClusterNodeState): string {
+  return `log ${n.log_index} · ${n.status}${n.partitioned ? " · isolated" : ""}`;
+}
+
+// Before/after rows for the insight table, straight from real snapshots.
+function evidenceRows(
+  before: SimulationState,
+  after: SimulationState,
+  summarize: (n: ClusterNodeState) => string
+) {
+  return after.nodes.map((n) => {
+    const beforeNode = before.nodes.find((b) => b.id === n.id);
+    return {
+      id: n.id,
+      before: beforeNode ? summarize(beforeNode) : "new node",
+      after: summarize(n),
+    };
+  });
 }
 
 function pause(ms: number): Promise<void> {
@@ -156,8 +184,8 @@ export function useSimulation() {
       scenarioRunningRef.current = true;
       const ctx: ScenarioContext = {
         stage: (message) => setScenario({ name, phase: "running", message }),
-        finish: (message) => setScenario({ name, phase: "done", message }),
-        fail: (message) => setScenario({ name, phase: "failed", message }),
+        finish: (message, insight) => setScenario({ name, phase: "done", message, insight }),
+        fail: (message, insight) => setScenario({ name, phase: "failed", message, insight }),
         cancelled: () => scenarioCancelledRef.current,
         wait: (ms) => pause(ms),
         state: () => stateRef.current as SimulationState,
@@ -229,14 +257,51 @@ export function useSimulation() {
       const elected = await api.startElection();
       ctx.apply(elected);
 
+      const evidence = evidenceRows(start, elected, roleEvidence);
+      const quorumNote =
+        `Quorum: ${elected.cluster.quorum_size} of ${elected.cluster.total_nodes} nodes ` +
+        `must be reachable — it was ${elected.cluster.quorum_available ? "available" : "NOT available"}.`;
+
       if (elected.current_leader) {
         ctx.finish(
-          `${elected.current_leader} is the new leader for term ${elected.current_term}.`
+          `${elected.current_leader} is the new leader for term ${elected.current_term}.`,
+          {
+            whatHappened:
+              `Leader ${leader.id} went offline during term ${start.current_term}, leaving the ` +
+              `cluster without a leader. The eligible (online, reachable) nodes then held an ` +
+              `election, and ${elected.current_leader} won term ${elected.current_term}.`,
+            whyItHappened:
+              `A crashed leader cannot coordinate the cluster, so the remaining eligible nodes ` +
+              `vote for a replacement. A majority — quorum — must be reachable for the election ` +
+              `to succeed. In NetViz the winner is deterministic: the smallest eligible node ID.`,
+            concept:
+              `Leader election: a distributed system chooses a single coordinator by majority ` +
+              `vote, so exactly one node leads each term.`,
+            evidence,
+            notes: [quorumNote],
+          }
         );
       } else {
+        const reachable = elected.nodes.filter(
+          (n) => n.status === "online" && !n.partitioned
+        ).length;
         ctx.fail(
           elected.recent_events.at(-1)?.description ??
-            "Election failed — quorum is not available."
+            "Election failed — quorum is not available.",
+          {
+            whatHappened:
+              `Leader ${leader.id} crashed, and the election FAILED: only ${reachable} of ` +
+              `${elected.cluster.total_nodes} nodes were reachable, but quorum requires ` +
+              `${elected.cluster.quorum_size}. The cluster intentionally has no leader.`,
+            whyItHappened:
+              `Without a reachable majority there is no safe way to agree on a leader, so the ` +
+              `cluster stays leaderless rather than risking two leaders at once.`,
+            concept:
+              `Quorum: the majority threshold that lets a distributed system make safe ` +
+              `decisions even when some nodes are unreachable.`,
+            evidence,
+            notes: [quorumNote],
+          }
         );
       }
     });
@@ -317,11 +382,36 @@ export function useSimulation() {
           !n.partitioned &&
           n.log_index === leaderNow.log_index
       );
+      const missed = replicated.nodes.filter(
+        (n) => n.id !== leader.id && !updated.some((u) => u.id === n.id)
+      );
+      const missedNote = missed.length
+        ? `Did not receive it: ${missed
+            .map((n) =>
+              `${n.id} (${n.status === "offline" ? "offline" : n.partitioned ? "isolated" : "did not advance"})`
+            )
+            .join(", ")}.`
+        : "Every online, reachable follower received the entry.";
       const newMessages = replicated.total_messages - before;
       ctx.finish(
         `Replicated log entry ${leaderNow.log_index} to ${updated.length} ` +
           `follower(s) (${updated.map((n) => n.id).join(", ") || "none"}), ` +
-          `${newMessages} message${newMessages === 1 ? "" : "s"} sent.`
+          `${newMessages} message${newMessages === 1 ? "" : "s"} sent.`,
+        {
+          whatHappened:
+            `Leader ${leader.id} appended log entry ${leaderNow.log_index} and replicated ` +
+            `it to ${updated.length} reachable follower(s): ${
+              updated.map((n) => n.id).join(", ") || "none"
+            }.`,
+          whyItHappened:
+            `The leader sends each new entry only to followers that are online and ` +
+            `reachable; each applies it and advances its log index to match the leader's.`,
+          concept:
+            `Log replication: the leader's entries are copied to followers so the whole ` +
+            `cluster agrees on a single history.`,
+          evidence: evidenceRows(start, replicated, logEvidence),
+          notes: [missedNote, `Messages sent in this run: ${newMessages}.`],
+        }
       );
     });
   }, [runScenario]);
