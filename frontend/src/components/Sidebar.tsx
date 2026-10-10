@@ -44,7 +44,7 @@ function NavList({ current, onNavigate }: { current: Screen; onNavigate: (screen
             onClick={() => onNavigate(item.id)}
             aria-current={active ? "page" : undefined}
             title={item.hint}
-            className={`flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-sm transition-colors ${
+            className={`flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-sm transition-colors ${
               active
                 ? "bg-teal-500/10 font-medium text-teal-300"
                 : "text-slate-400 hover:bg-slate-800/70 hover:text-slate-200"
@@ -62,9 +62,9 @@ function NavList({ current, onNavigate }: { current: Screen; onNavigate: (screen
 export default function Sidebar({ current, onNavigate, open, onClose }: Props) {
   return (
     <>
-      {/* Desktop sidebar */}
-      <aside className="hidden w-56 shrink-0 lg:block">
-        <div className="sticky top-16 px-3 py-6">
+      {/* Desktop sidebar — compact so the main area keeps the space */}
+      <aside className="hidden w-44 shrink-0 lg:block">
+        <div className="sticky top-16 px-2 py-6">
           <NavList current={current} onNavigate={onNavigate} />
         </div>
       </aside>
