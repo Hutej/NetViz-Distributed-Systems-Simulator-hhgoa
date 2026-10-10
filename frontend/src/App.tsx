@@ -1,96 +1,114 @@
+import { useState } from "react";
 import { Loader2, TriangleAlert, X } from "lucide-react";
 
-import ControlPanel from "./components/ControlPanel";
-import EventLog from "./components/EventLog";
 import Header from "./components/Header";
-import MessagesPanel from "./components/MessagesPanel";
-import NetworkCanvas from "./components/NetworkCanvas";
-import NodeInspector from "./components/NodeInspector";
-import ScenarioBanner from "./components/ScenarioBanner";
-import ScenarioLab from "./components/ScenarioLab";
-import StatsPanel from "./components/StatsPanel";
+import Sidebar, { type Screen } from "./components/Sidebar";
+import Learn from "./screens/Learn";
+import Overview from "./screens/Overview";
+import ScenarioLabScreen, { type ScenarioKind } from "./screens/ScenarioLabScreen";
+import Simulator from "./screens/Simulator";
+import Timeline from "./screens/Timeline";
 import { useSimulation } from "./hooks/useSimulation";
 
 export default function App() {
   const sim = useSimulation();
+  const [screen, setScreen] = useState<Screen>("overview");
+  const [menuOpen, setMenuOpen] = useState(false);
 
-  const runScenario =
-    (kind: "leader-failure" | "partition-replication" | "log-replication") => {
-      if (kind === "leader-failure") void sim.runLeaderFailure();
-      else if (kind === "partition-replication") void sim.runPartitionReplication();
-      else void sim.runLogReplication();
-    };
+  const navigate = (next: Screen) => {
+    setScreen(next);
+    setMenuOpen(false);
+  };
+
+  const runScenario = (kind: ScenarioKind) => {
+    // Watch on the Simulator: navigate immediately, then start once. The
+    // runner lives in useSimulation at App level, so it keeps running across
+    // navigation and survives screen changes.
+    setScreen("simulator");
+    setMenuOpen(false);
+    if (kind === "leader-failure") void sim.runLeaderFailure();
+    else if (kind === "partition-replication") void sim.runPartitionReplication();
+    else void sim.runLogReplication();
+  };
 
   return (
-    <div className="flex h-screen flex-col bg-slate-950 text-slate-100">
+    // min-h-screen, not h-screen: the whole page scrolls normally; the shell
+    // never clips content below the fold.
+    <div className="min-h-screen bg-slate-950 text-slate-100">
       <Header
         restStatus={sim.restStatus}
         wsStatus={sim.wsStatus}
         onReset={() => void sim.act("reset")}
         resetDisabled={sim.scenarioActive}
+        onMenu={() => setMenuOpen(true)}
       />
 
-      <ScenarioBanner scenario={sim.scenario} />
-
       {sim.error && (
-        <div className="flex items-center gap-3 border-b border-red-500/30 bg-red-500/10 px-6 py-2 text-sm text-red-300">
+        <div className="flex items-center gap-3 border-b border-red-500/30 bg-red-500/10 px-4 py-2 text-sm text-red-300 sm:px-6">
           <TriangleAlert className="size-4 shrink-0" />
-          <span className="min-w-0 flex-1 truncate">{sim.error}</span>
+          <span className="min-w-0 flex-1">{sim.error}</span>
           <button type="button" onClick={sim.clearError} aria-label="Dismiss error">
             <X className="size-4" />
           </button>
         </div>
       )}
 
-      {!sim.state ? (
-        <div className="flex flex-1 flex-col items-center justify-center gap-3 text-slate-400">
-          <Loader2 className="size-8 animate-spin text-teal-400" />
-          <p className="text-sm">Connecting to the simulation…</p>
-          {sim.restStatus === "down" && (
-            <p className="text-sm text-red-400">
-              Cannot reach the backend API. Is the Django server running on
-              port 8000?
-            </p>
-          )}
-        </div>
-      ) : (
-        <main className="grid flex-1 gap-4 overflow-y-auto p-4 lg:grid-cols-[minmax(0,1fr)_380px] lg:overflow-hidden">
-          <section className="flex min-w-0 flex-col gap-3">
-            <div className="min-h-[320px] flex-1 overflow-hidden rounded-xl border border-slate-800 bg-gradient-to-b from-slate-900/60 to-slate-950">
-              <NetworkCanvas
-                state={sim.state}
-                selectedId={sim.selectedId}
-                onSelect={sim.select}
-              />
+      <div className="flex">
+        <Sidebar
+          current={screen}
+          onNavigate={navigate}
+          open={menuOpen}
+          onClose={() => setMenuOpen(false)}
+        />
+
+        <main className="min-w-0 flex-1">
+          {!sim.state ? (
+            <div className="flex min-h-[60vh] flex-col items-center justify-center gap-3 text-slate-400">
+              <Loader2 className="size-8 animate-spin text-teal-400" />
+              <p className="text-sm">Connecting to the simulation…</p>
+              {sim.restStatus === "down" && (
+                <p className="max-w-sm text-center text-sm text-red-400">
+                  Cannot reach the backend API. Start the Django server first:
+                  <code className="mx-1 rounded bg-slate-800 px-1.5 py-0.5 font-mono text-xs text-slate-300">
+                    venv\Scripts\python manage.py runserver
+                  </code>
+                </p>
+              )}
             </div>
-            {sim.selectedId && (
-              <NodeInspector
-                state={sim.state}
-                selectedId={sim.selectedId}
-                onClear={() => sim.select(null)}
-              />
-            )}
-            <StatsPanel state={sim.state} />
-          </section>
-          <aside className="flex min-h-0 flex-col gap-3">
-            <ScenarioLab
-              scenarioRunning={sim.scenarioActive}
-              onRun={runScenario}
-            />
-            <ControlPanel
-              state={sim.state}
-              selectedId={sim.selectedId}
-              onAction={sim.act}
-              scenarioRunning={sim.scenarioActive}
-            />
-            <EventLog
-              events={sim.state.recent_events}
-              className="min-h-0 flex-1"
-            />
-            <MessagesPanel messages={sim.state.recent_messages} />
-          </aside>
+          ) : (
+            <>
+              {screen === "overview" && (
+                <Overview
+                  state={sim.state}
+                  onOpenSimulator={() => navigate("simulator")}
+                  onOpenScenarios={() => navigate("scenarios")}
+                />
+              )}
+              {screen === "simulator" && (
+                <Simulator
+                  state={sim.state}
+                  selectedId={sim.selectedId}
+                  onSelect={sim.select}
+                  onAction={sim.act}
+                  scenarioRunning={sim.scenarioActive}
+                  scenario={sim.scenario}
+                  onOpenScenarios={() => navigate("scenarios")}
+                />
+              )}
+              {screen === "scenarios" && (
+                <ScenarioLabScreen
+                  scenario={sim.scenario}
+                  scenarioRunning={sim.scenarioActive}
+                  onRun={runScenario}
+                  onOpenSimulator={() => navigate("simulator")}
+                />
+              )}
+              {screen === "timeline" && <Timeline state={sim.state} />}
+              {screen === "learn" && <Learn />}
+            </>
+          )}
         </main>
-      )}
+      </div>
     </div>
   );
 }

@@ -1,1 +1,13 @@
 @import "tailwindcss";
+
+:root {
+  color-scheme: dark;
+}
+
+/* Visible keyboard focus across the whole app */
+button:focus-visible,
+a:focus-visible,
+[role="button"]:focus-visible {
+  outline: 2px solid #2dd4bf;
+  outline-offset: 2px;
+}

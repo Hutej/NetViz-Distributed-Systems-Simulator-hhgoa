@@ -36,10 +36,10 @@ export default function ClusterNode({ data, selected }: NodeProps<ClusterNodeTyp
           : ""
       }`}
     >
-      <Handle type="target" position={Position.Left} className="!size-2 !border-none !bg-slate-600" />
+      <Handle type="target" position={Position.Left} className="size-2! border-none! bg-slate-600!" />
       <div className="flex items-center justify-between gap-2">
         <div className="flex items-center gap-1.5">
-          <span className="font-semibold text-slate-100">{node.name}</span>
+          <span className="text-sm font-semibold text-slate-100">{node.name}</span>
           {node.role === "leader" && (
             <motion.span
               animate={{ opacity: [1, 0.4, 1] }}
@@ -93,7 +93,7 @@ export default function ClusterNode({ data, selected }: NodeProps<ClusterNodeTyp
         </div>
       )}
 
-      <Handle type="source" position={Position.Right} className="!size-2 !border-none !bg-slate-600" />
+      <Handle type="source" position={Position.Right} className="size-2! border-none! bg-slate-600!" />
     </motion.div>
   );
 }

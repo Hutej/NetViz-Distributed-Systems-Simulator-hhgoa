@@ -15,7 +15,7 @@ interface Props {
   className?: string;
 }
 
-const ICON: Record<EventType, LucideIcon> = {
+export const EVENT_ICONS: Record<EventType, LucideIcon> = {
   system: Activity,
   election: Vote,
   replication: Layers,
@@ -24,7 +24,7 @@ const ICON: Record<EventType, LucideIcon> = {
   partition: Unlink2,
 };
 
-const TONE: Record<EventType, string> = {
+export const EVENT_TONES: Record<EventType, string> = {
   system: "text-slate-400",
   election: "text-amber-300",
   replication: "text-sky-300",
@@ -33,8 +33,15 @@ const TONE: Record<EventType, string> = {
   partition: "text-orange-400",
 };
 
-function time(timestamp: string): string {
+export function formatTime(timestamp: string): string {
   return new Date(timestamp).toLocaleTimeString();
+}
+
+const ICON = EVENT_ICONS;
+const TONE = EVENT_TONES;
+
+function time(timestamp: string): string {
+  return formatTime(timestamp);
 }
 
 export default function EventLog({ events, className }: Props) {

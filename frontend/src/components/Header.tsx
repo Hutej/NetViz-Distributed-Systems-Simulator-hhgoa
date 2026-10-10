@@ -1,4 +1,4 @@
-import { Braces, Network, Radio, RotateCcw } from "lucide-react";
+import { Braces, Menu, Network, Radio, RotateCcw } from "lucide-react";
 
 import type { Connection } from "../hooks/useSimulation";
 
@@ -7,6 +7,7 @@ interface Props {
   wsStatus: Connection;
   onReset: () => void;
   resetDisabled: boolean;
+  onMenu: () => void;
 }
 
 const DOT: Record<Connection, string> = {
@@ -32,12 +33,13 @@ function StatusPill({
 }) {
   return (
     <span
-      className="flex items-center gap-2 rounded-full border border-slate-800 bg-slate-900/80 px-3 py-1 text-xs text-slate-300"
+      className="hidden items-center gap-2 rounded-full border border-slate-800 bg-slate-900/80 px-3 py-1 text-xs text-slate-300 sm:flex"
       title={`${label}: ${LABEL[status]}`}
     >
       <Icon className="size-3.5 text-slate-500" />
       <span className="font-medium text-slate-400">{label}</span>
       <span className={`size-2 rounded-full ${DOT[status]}`} aria-hidden />
+      <span className="sr-only">{LABEL[status]}</span>
     </span>
   );
 }
@@ -47,18 +49,29 @@ export default function Header({
   wsStatus,
   onReset,
   resetDisabled,
+  onMenu,
 }: Props) {
   return (
-    <header className="flex items-center justify-between gap-4 border-b border-slate-800 bg-slate-900/80 px-6 py-3">
-      <div className="flex items-center gap-3">
-        <span className="flex size-9 items-center justify-center rounded-lg bg-emerald-500/15">
-          <Network className="size-5 text-emerald-400" />
+    <header className="sticky top-0 z-40 flex h-16 items-center justify-between gap-3 border-b border-slate-800 bg-slate-950/95 px-4 backdrop-blur sm:px-6">
+      <div className="flex min-w-0 items-center gap-3">
+        <button
+          type="button"
+          onClick={onMenu}
+          aria-label="Open navigation menu"
+          className="rounded-lg p-2 text-slate-400 hover:bg-slate-800 hover:text-slate-200 lg:hidden"
+        >
+          <Menu className="size-5" />
+        </button>
+        <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-teal-500/15">
+          <Network className="size-5 text-teal-300" />
         </span>
-        <div>
-          <h1 className="font-mono text-lg font-bold tracking-[0.2em] text-slate-100">
+        <div className="min-w-0">
+          <h1 className="font-mono text-base font-bold tracking-[0.2em] text-slate-100">
             NETVIZ
           </h1>
-          <p className="text-xs text-slate-400">Distributed Systems Playground</p>
+          <p className="truncate text-xs text-slate-400">
+            Distributed Systems Playground
+          </p>
         </div>
       </div>
       <div className="flex items-center gap-2">
@@ -68,15 +81,15 @@ export default function Header({
           type="button"
           onClick={onReset}
           disabled={resetDisabled}
-          title={resetDisabled ? "Demo in progress" : "Reset the simulation"}
+          title={resetDisabled ? "Scenario in progress" : "Reset the cluster to its initial state"}
           className={`flex items-center gap-2 rounded-lg border border-slate-700 bg-slate-900 px-3 py-1.5 text-sm transition-colors ${
             resetDisabled
               ? "cursor-not-allowed text-slate-500 opacity-50"
-              : "text-slate-300 hover:border-emerald-400/50 hover:text-emerald-300"
+              : "text-slate-300 hover:border-teal-400/50 hover:text-teal-300"
           }`}
         >
           <RotateCcw className="size-4" />
-          Reset
+          <span className="hidden sm:inline">Reset</span>
         </button>
       </div>
     </header>

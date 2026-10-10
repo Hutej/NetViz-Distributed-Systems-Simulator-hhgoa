@@ -1,16 +1,16 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Background,
   BackgroundVariant,
   Controls,
   MiniMap,
-  Panel,
   ReactFlow,
   ReactFlowProvider,
+  useReactFlow,
   type Edge,
   type Node,
   type NodeChange,
-  useReactFlow,
+  type Viewport,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 
@@ -25,8 +25,17 @@ interface Props {
 
 const nodeTypes = { cluster: ClusterNode };
 
+// NetworkCanvas unmounts whenever the user navigates away from Simulator,
+// but dragged positions, the fitted-flag and the user's viewport must survive
+// navigation. Module-level store for this single-instance dashboard.
+const layoutStore = {
+  positions: {} as Record<string, { x: number; y: number }>,
+  seenIds: new Set<string>(),
+  viewport: null as Viewport | null,
+};
+
 // Default position for a node we have never seen (or dragged): a circle wide
-// enough that 208px cards never overlap.
+// enough that 224px cards never overlap.
 function layoutPosition(index: number, count: number) {
   const radius = count <= 3 ? 190 : 190 + (count - 3) * 55;
   const angle = (2 * Math.PI * index) / count - Math.PI / 2;
@@ -41,21 +50,14 @@ const MINI_COLORS: Record<Role | "offline" | "isolated", string> = {
   isolated: "#f59e0b",
 };
 
-const LEGEND: Array<{ label: string; className: string }> = [
-  { label: "Leader", className: "bg-emerald-400" },
-  { label: "Follower", className: "bg-sky-400" },
-  { label: "Candidate", className: "bg-amber-300" },
-  { label: "Offline", className: "bg-red-500" },
-  { label: "Isolated", className: "border border-orange-400 bg-transparent" },
-];
-
 function Canvas({ state, selectedId, onSelect }: Props) {
   const { fitView } = useReactFlow();
 
-  // Dragged positions, kept separately from backend snapshots so WebSocket
-  // updates never reset the user's layout.
-  const [positions, setPositions] = useState<Record<string, { x: number; y: number }>>({});
-  const seenIdsRef = useRef<Set<string> | null>(null);
+  const [positions, setPositions] = useState(layoutStore.positions);
+
+  useEffect(() => {
+    layoutStore.positions = positions;
+  }, [positions]);
 
   const nodes = useMemo<Node<ClusterNodeData>[]>(
     () =>
@@ -98,8 +100,8 @@ function Canvas({ state, selectedId, onSelect }: Props) {
     return result;
   }, [state.nodes, state.current_leader, selectedId]);
 
-  // Persist drags into the positions map; ignore React Flow's internal
-  // selection changes (selection is ours via onNodeClick/onPaneClick).
+  // Persist drags; ignore React Flow's internal selection changes (selection
+  // is ours via onNodeClick/onPaneClick).
   const onNodesChange = useCallback((changes: NodeChange[]) => {
     setPositions((prev) => {
       const next = { ...prev };
@@ -114,27 +116,36 @@ function Canvas({ state, selectedId, onSelect }: Props) {
     });
   }, []);
 
-  // Fit on first load, and again only when the topology grows (a new node
-  // appears) — never on routine state updates, which would fight the user's
-  // chosen viewport.
+  // First visit: frame the whole graph once the instance (and container
+  // dimensions) exist. Returning visits: restore the user's viewport.
+  const onInit = useCallback((instance: { fitView: (params: { padding: number; maxZoom: number }) => void; setViewport: (vp: Viewport) => void }) => {
+    if (layoutStore.viewport) {
+      instance.setViewport(layoutStore.viewport);
+    } else {
+      instance.fitView({ padding: 0.2, maxZoom: 1.25 });
+    }
+  }, []);
+
+  const onMoveEnd = useCallback((_event: unknown, viewport: Viewport) => {
+    layoutStore.viewport = viewport;
+  }, []);
+
+  // Refit only when the topology grows — never on routine state updates.
   useEffect(() => {
     if (state.nodes.length === 0) return;
-    if (seenIdsRef.current === null) {
-      seenIdsRef.current = new Set(state.nodes.map((n) => n.id));
-      fitView({ padding: 0.25, maxZoom: 1, duration: 400 });
-      return;
-    }
-    const newIds = state.nodes.filter((n) => !seenIdsRef.current?.has(n.id));
-    if (newIds.length > 0) {
-      state.nodes.forEach((n) => seenIdsRef.current?.add(n.id));
-      fitView({ padding: 0.3, maxZoom: 1.1, duration: 400 });
+    const isFirstSighting = layoutStore.seenIds.size === 0;
+    const newIds = state.nodes.filter((n) => !layoutStore.seenIds.has(n.id));
+    if (newIds.length === 0) return;
+    state.nodes.forEach((n) => layoutStore.seenIds.add(n.id));
+    if (!isFirstSighting) {
+      // Small delay so the new node is measured before fitting.
+      const timer = setTimeout(
+        () => fitView({ padding: 0.25, maxZoom: 1.25, duration: 400 }),
+        50
+      );
+      return () => clearTimeout(timer);
     }
   }, [state.nodes, fitView]);
-
-  const healthTone =
-    state.cluster.health === "healthy"
-      ? "text-emerald-400"
-      : "text-amber-300";
 
   return (
     <ReactFlow
@@ -144,12 +155,15 @@ function Canvas({ state, selectedId, onSelect }: Props) {
       onNodeClick={(_, node) => onSelect(node.id)}
       onPaneClick={() => onSelect(null)}
       onNodesChange={onNodesChange}
+      onInit={onInit}
+      onMoveEnd={onMoveEnd}
       nodesConnectable={false}
       minZoom={0.25}
       colorMode="dark"
     >
       <Background variant={BackgroundVariant.Dots} gap={26} color="#1e293b" />
-      <Controls showInteractive={false} />
+      {/* Built-in zoom + an explicit Fit View control to recover any pan/zoom */}
+      <Controls showInteractive={false} showFitView fitViewOptions={{ padding: 0.2, maxZoom: 1.25 }} />
       <MiniMap
         pannable
         zoomable
@@ -163,26 +177,15 @@ function Canvas({ state, selectedId, onSelect }: Props) {
           return MINI_COLORS[node.role];
         }}
         nodeStrokeColor="#0f172a"
-        maskColor="rgb(2 6 23 / 0.72)"
-        className="!border !border-slate-800 !bg-slate-950/90 !rounded-lg"
+        maskColor="rgba(2, 6, 23, 0.45)"
+        style={{
+          width: 148,
+          height: 96,
+          backgroundColor: "#0f172a",
+          border: "1px solid #1e293b",
+          borderRadius: 8,
+        }}
       />
-
-      <Panel position="top-left" className="!m-3">
-        <div className="rounded-lg border border-slate-800 bg-slate-950/90 p-3 text-xs backdrop-blur">
-          <p className="font-medium text-slate-300">
-            {state.cluster.total_nodes} nodes · {edges.length} links ·{" "}
-            <span className={healthTone}>{state.cluster.health}</span>
-          </p>
-          <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-slate-400">
-            {LEGEND.map((item) => (
-              <span key={item.label} className="flex items-center gap-1.5">
-                <span className={`size-2 rounded-full ${item.className}`} />
-                {item.label}
-              </span>
-            ))}
-          </div>
-        </div>
-      </Panel>
     </ReactFlow>
   );
 }

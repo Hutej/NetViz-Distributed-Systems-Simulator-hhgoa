@@ -107,12 +107,16 @@ export default function ControlPanel({
   return (
     <section className="rounded-xl border border-slate-800 bg-slate-900/60 p-4">
       <h2 className="text-sm font-semibold uppercase tracking-wider text-slate-400">
-        Control Panel
+        Controls
       </h2>
       <p className="mt-1 text-xs text-slate-500">
         {selected
           ? `Selected: ${selected.name} — ${selected.role}, ${selected.status}${selected.partitioned ? ", isolated" : ""}`
           : "Click a node on the canvas to enable node actions."}
+      </p>
+      <p className="mt-1 text-xs text-slate-600">
+        Crash takes a node offline · Recover brings it back · Isolate simulates a
+        network partition
       </p>
       <div className="mt-3 grid grid-cols-2 gap-2">
         {buttons.map((button) => (
