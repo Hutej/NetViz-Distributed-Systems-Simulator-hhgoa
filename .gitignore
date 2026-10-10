@@ -7,3 +7,8 @@ __pycache__/
 .DS_Store
 db.sqlite3
 tsconfig.tsbuildinfo
+.venv/
+*.log
+*.sqlite3
+.pytest_cache/
+.mypy_cache/
