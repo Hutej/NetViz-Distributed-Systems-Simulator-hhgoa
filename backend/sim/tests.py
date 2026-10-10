@@ -205,22 +205,35 @@ class SimulationApiTests(SimpleTestCase):
         self.assertEqual(response.json(), {"status": "ok"})
 
 
+def peer(state, name):
+    return next(p for p in state["peers"] if p["peer"] == name)
+
+
 class IntegrityChainTests(SimpleTestCase):
-    """Hash-chain integrity demo (isolated from the cluster engine)."""
+    """Multi-peer blockchain simulator (isolated from the cluster engine)."""
 
     def setUp(self):
-        from .chain import ChainError, IntegrityChain
+        from .chain import BlockchainSim, ChainError
 
-        self.chain = IntegrityChain()
+        self.chain = BlockchainSim()
         self.ChainError = ChainError
 
-    def test_initial_chain_is_valid(self):
+    def test_initial_histories_are_valid_and_identical(self):
         state = self.chain.get_state()
         self.assertEqual(len(state["blocks"]), 3)
         self.assertTrue(state["valid"])
         self.assertIsNone(state["first_invalid"])
         for previous, block in zip(state["blocks"], state["blocks"][1:]):
             self.assertEqual(block["previous_hash"], previous["hash"])
+            # Every block satisfies the toy proof-of-work rule.
+            self.assertTrue(block["hash"].startswith("00"))
+        # All three peers start from the same valid history.
+        self.assertEqual(len(state["peers"]), 3)
+        self.assertTrue(all(p["valid"] and p["height"] == 3 for p in state["peers"]))
+        self.assertEqual(
+            {p["tip_hash"] for p in state["peers"]},
+            {state["blocks"][-1]["hash"]},
+        )
 
     def test_tampering_invalidates_at_first_bad_block(self):
         state = self.chain.tamper(1, "transfer: Alice sends 500 coins to Eve")
@@ -231,19 +244,195 @@ class IntegrityChainTests(SimpleTestCase):
         self.assertEqual(
             state["blocks"][2]["previous_hash"], state["blocks"][1]["hash"]
         )
+        # Tampering is peer-specific: B and C stay valid.
+        self.assertFalse(peer(state, "A")["valid"])
+        self.assertTrue(peer(state, "B")["valid"])
+        self.assertTrue(peer(state, "C")["valid"])
 
     def test_genesis_and_unknown_index_rejected(self):
         with self.assertRaises(self.ChainError):
             self.chain.tamper(0, "nope")
         with self.assertRaises(self.ChainError):
             self.chain.tamper(99, "nope")
+        with self.assertRaises(self.ChainError):
+            self.chain.tamper(1, "nope", "NOPE")
         self.assertTrue(self.chain.get_state()["valid"])
 
     def test_reset_restores_validity(self):
         self.chain.tamper(1, "transfer: Alice sends 500 coins to Eve")
         state = self.chain.reset()
         self.assertTrue(state["valid"])
-        self.assertEqual(state["blocks"][1]["data"], "transfer: Alice sends 5 coins to Bob")
+        self.assertEqual(
+            state["blocks"][1]["transactions"], ["transfer: Alice sends 5 coins to Bob"]
+        )
+
+
+class BlockchainPeerTests(SimpleTestCase):
+    def setUp(self):
+        from .chain import BlockchainSim
+
+        self.sim = BlockchainSim()
+
+    def test_pow_mining_produces_verifiable_block_and_propagates(self):
+        self.sim.submit_transaction("Alice", "Bob", 5, "A")
+        state = self.sim.mine("A")
+        result = state["result"]
+        block = result["block"]
+        self.assertTrue(block["hash"].startswith("00"))
+        self.assertGreaterEqual(result["nonce_attempts"], 1)
+        self.assertEqual(block["miner"], "A")
+        self.assertEqual(block["transactions"][0]["amount"], 5)
+        self.assertEqual(block["index"], 3)
+        # Every peer appended the block and remains valid.
+        self.assertEqual(set(result["accepted_by"]), {"B", "C"})
+        self.assertTrue(all(p["valid"] and p["height"] == 4 for p in state["peers"]))
+        # Mining consumed the pending pool.
+        self.assertTrue(all(p["pending_count"] == 0 for p in state["peers"]))
+
+    def test_invalid_transactions_rejected(self):
+        cases = [
+            ("", "Bob", 5),          # empty sender
+            ("Alice", "", 5),        # empty recipient
+            ("Alice", "Alice", 5),   # same sender and recipient
+            ("Alice", "Bob", 0),     # non-positive amount
+            ("Alice", "Bob", -3),
+        ]
+        for sender, recipient, amount in cases:
+            with self.assertRaises(Exception):
+                self.sim.submit_transaction(sender, recipient, amount, "A")
+        with self.assertRaises(Exception):
+            self.sim.submit_transaction("Alice", "Bob", 5, "NOPE")
+        self.assertTrue(self.sim.get_state()["valid"])
+
+    def test_isolated_peer_misses_transactions_and_blocks(self):
+        self.sim.set_isolation("C", True)
+        self.sim.submit_transaction("Alice", "Bob", 5, "A")
+        state = self.sim.mine("A")
+        result = state["result"]
+        self.assertEqual(peer(state, "A")["height"], 4)
+        self.assertEqual(peer(state, "B")["height"], 4)
+        # C saw neither the transaction nor the block.
+        self.assertEqual(peer(state, "C")["height"], 3)
+        self.assertEqual(peer(state, "C")["pending_count"], 0)
+        self.assertEqual(
+            [r["peer"] for r in result["rejected"] if "isolated" in r["reason"]], ["C"]
+        )
+
+    def test_fork_and_deterministic_reconciliation(self):
+        # All peers receive the transaction while connected.
+        self.sim.submit_transaction("Alice", "Bob", 5, "A")
+        self.sim.set_isolation("C", True)
+        mined_a = self.sim.mine("A")["result"]  # A and B extend the shared chain
+        mined_c = self.sim.mine("C")["result"]  # C mines a competing block
+        self.assertNotEqual(mined_a["block"]["hash"], mined_c["block"]["hash"])
+        self.sim.set_isolation("C", False)
+        before = self.sim.get_state()
+        # Both branches are valid and equally long; the documented tie-break
+        # is smallest tip hash, then peer name.
+        tips = {p["peer"]: p["tip_hash"] for p in before["peers"]}
+        expected_winner = min(("A", "C"), key=lambda p: (tips[p], p))
+        state = self.sim.reconcile()
+        result = state["result"]
+        self.assertEqual(result["winner"], expected_winner)
+        self.assertEqual(result["height"], 4)
+        # Exactly the peers that were on a losing BRANCH orphan a block. B
+        # shares A's branch (it accepted A's block while connected), so if A
+        # wins only C orphans; if C wins, both A and B do.
+        winner_tip = tips[expected_winner]
+        expected_losers = sorted(p for p, tip in tips.items() if tip != winner_tip)
+        orphaned_peers = sorted(o["peer"] for o in result["orphaned"])
+        self.assertEqual(orphaned_peers, expected_losers)
+        self.assertTrue(all(o["blocks"][0]["index"] == 3 for o in result["orphaned"]))
+        # After reconciliation every peer agrees on one history.
+        self.assertEqual(len({p["tip_hash"] for p in state["peers"]}), 1)
+        self.assertTrue(all(p["valid"] for p in state["peers"]))
+
+    def test_reconcile_rejects_invalid_candidates(self):
+        self.sim.tamper(1, "transfer: Alice sends 500 coins to Eve", "A")
+        state = self.sim.reconcile()
+        result = state["result"]
+        self.assertIn("A", [r["peer"] for r in result["rejected_candidates"]])
+        # A valid candidate (B or C — identical chains, smallest name wins) heals A.
+        self.assertEqual(result["winner"], "B")
+        self.assertTrue(all(p["valid"] for p in state["peers"]))
+
+    def test_reconcile_never_touches_isolated_peers(self):
+        self.sim.set_isolation("C", True)
+        self.sim.mine("A")  # A and B advance to height 4
+        self.sim.mine("A")  # height 5
+        state = self.sim.reconcile()
+        # C keeps its untouched height-3 history while connected peers sync.
+        self.assertEqual(peer(state, "C")["height"], 3)
+        self.assertEqual(peer(state, "A")["height"], 5)
+        self.assertEqual(peer(state, "B")["height"], 5)
+        # Reconnecting and reconciling brings C back onto the winning chain.
+        self.sim.set_isolation("C", False)
+        state = self.sim.reconcile()
+        self.assertEqual(peer(state, "C")["height"], 5)
+        # C's old blocks were a prefix of the winner, so nothing was orphaned
+        # on C itself.
+        for entry in state["result"]["orphaned"]:
+            if entry["peer"] == "C":
+                self.assertEqual(entry["blocks"], [])
+
+    def test_stale_block_is_not_accepted(self):
+        self.sim.set_isolation("C", True)
+        self.sim.mine("A")  # A, B at height 4
+        self.sim.mine("C")  # C mines a competing block at height 4
+        self.sim.mine("C")  # C extends its own fork to height 5
+        # When C reconnects, A and B still hold their own (shorter) branch.
+        self.sim.set_isolation("C", False)
+        state = self.sim.get_state()
+        self.assertEqual(peer(state, "A")["height"], 4)
+        self.assertEqual(peer(state, "C")["height"], 5)
+        self.assertTrue(peer(state, "A")["valid"])
+
+    def test_reset_restores_identical_histories(self):
+        self.sim.set_isolation("C", True)
+        self.sim.mine("A")
+        self.sim.mine("C")
+        state = self.sim.reset()
+        self.assertTrue(all(
+            p["valid"] and p["height"] == 3 and not p["isolated"] for p in state["peers"]
+        ))
+        self.assertEqual(len({p["tip_hash"] for p in state["peers"]}), 1)
+
+
+class IntegrityApiTests(SimpleTestCase):
+    def setUp(self):
+        from .chain import blockchain
+
+        blockchain.reset()
+
+    def post(self, path, body=None):
+        import json
+
+        return self.client.post(
+            f"/api/integrity/{path}",
+            data=json.dumps(body or {}),
+            content_type="application/json",
+        )
+
+    def test_transaction_and_mine_endpoints(self):
+        response = self.post("transaction", {"sender": "Alice", "recipient": "Bob", "amount": 5, "peer": "A"})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["result"]["propagated_to"], ["B", "C"])
+        response = self.post("mine", {"peer": "A"})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["result"]["block"]["index"], 3)
+        response = self.post("transaction", {"sender": "Alice", "recipient": "Bob", "amount": 0})
+        self.assertEqual(response.status_code, 400)
+
+    def test_legacy_single_chain_view_still_works(self):
+        response = self.client.get("/api/integrity/state")
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        for key in ("blocks", "valid", "first_invalid", "reason"):
+            self.assertIn(key, body)
+        # Old-style tamper (no peer field) defaults to peer A.
+        response = self.post("tamper", {"index": 1, "data": "edited"})
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(response.json()["valid"])
 
 
 class LinkFaultTests(SimpleTestCase):

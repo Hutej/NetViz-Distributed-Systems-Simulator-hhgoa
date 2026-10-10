@@ -1,18 +1,76 @@
 import { ApiError } from "./client";
 
-// Hash-chain integrity demo (separate from the cluster simulation).
+// Multi-peer blockchain simulator (Integrity Lab backend).
 export interface ChainBlock {
   index: number;
-  data: string;
+  timestamp: string;
+  transactions: Array<string | { id: string; sender: string; recipient: string; amount: number }>;
   previous_hash: string;
+  nonce: number;
+  miner: string;
   hash: string;
 }
 
+export interface PendingTx {
+  id: string;
+  sender: string;
+  recipient: string;
+  amount: number;
+}
+
+export interface PeerState {
+  peer: string;
+  isolated: boolean;
+  height: number;
+  tip_hash: string;
+  pending_count: number;
+  pending: PendingTx[];
+  chain: ChainBlock[];
+  valid: boolean;
+  first_invalid: number | null;
+  reason: string | null;
+}
+
+export interface RejectedPeer {
+  peer: string;
+  reason: string;
+}
+
+export interface OrphanedBranch {
+  peer: string;
+  blocks: Array<{ index: number; hash: string }>;
+}
+
+export interface IntegrityResult {
+  block?: ChainBlock;
+  nonce_attempts?: number;
+  accepted_by?: string[];
+  rejected?: RejectedPeer[];
+  propagated_to?: string[];
+  skipped?: RejectedPeer[];
+  transaction?: PendingTx;
+  winner?: string;
+  height?: number;
+  tip_hash?: string;
+  updated?: string[];
+  orphaned?: OrphanedBranch[];
+  rejected_candidates?: RejectedPeer[];
+  peer?: string;
+  valid?: boolean;
+  first_invalid?: number | null;
+  reason?: string | null;
+  index?: number;
+}
+
 export interface IntegrityState {
+  peers: PeerState[];
+  difficulty: number;
+  // Backward-compatible single-chain view of peer A.
   blocks: ChainBlock[];
   valid: boolean;
   first_invalid: number | null;
   reason: string | null;
+  result?: IntegrityResult;
 }
 
 const BASE = "/api/integrity";
@@ -35,9 +93,12 @@ function post(path: string, body?: unknown): Promise<IntegrityState> {
 
 export const integrityApi = {
   getState: () => request("/state"),
-  // The backend stores the new data but never recalculates the stored hash —
-  // that is exactly what makes tampering detectable.
-  tamper: (index: number, data: string) => post("/tamper", { index, data }),
-  validate: () => post("/validate"),
+  submitTransaction: (sender: string, recipient: string, amount: number, peer: string) =>
+    post("/transaction", { sender, recipient, amount, peer }),
+  mine: (peer: string) => post("/mine", { peer }),
+  setPeer: (peer: string, isolated: boolean) => post("/peer", { peer, isolated }),
+  validate: (peer: string) => post("/validate", { peer }),
+  tamper: (index: number, data: string, peer: string) => post("/tamper", { index, data, peer }),
+  reconcile: () => post("/reconcile"),
   reset: () => post("/reset"),
 };
