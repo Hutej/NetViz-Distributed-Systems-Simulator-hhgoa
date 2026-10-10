@@ -236,10 +236,6 @@ docs/                architecture, API reference, development & release notes
 
 NetViz was developed with a voice-first workflow: requirements and review feedback were largely dictated with [Wispr Flow](https://wisprflow.ai) and handed to [Pi](https://github.com/earendil-works/pi-coding-agent), an agent-based coding assistant running in the terminal, which planned, wrote, and refactored the code across the frontend and backend. Some longer specifications were pasted into Pi as text rather than spoken. Every change was then reviewed and verified the ordinary way — reading the diff, running the Django test suite, the TypeScript build, WebSocket checks, and manual browser testing.
 
-## Demo video
-
-> **Pending** — the final product demo video has not been uploaded yet. The link will be inserted here when ready.
-
 ## More documentation
 
 - [Architecture](docs/ARCHITECTURE.md) — how the engines, API and frontend fit together.
