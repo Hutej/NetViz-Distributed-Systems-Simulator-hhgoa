@@ -57,7 +57,7 @@ export default function EventLog({ events, className }: Props) {
             return (
               <li
                 key={event.id}
-                className="flex items-start gap-2.5 rounded-lg border border-slate-800/70 bg-slate-950/40 p-2.5"
+                className="flex items-start gap-2.5 rounded-lg border border-slate-800/70 bg-slate-950/40 p-2.5 transition-colors hover:bg-slate-900/60"
               >
                 <Icon className={`mt-0.5 size-4 shrink-0 ${TONE[event.type]}`} />
                 <div className="min-w-0">

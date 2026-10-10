@@ -7,7 +7,6 @@ import {
   RotateCcw,
   Unlink2,
   Vote,
-  Zap,
 } from "lucide-react";
 
 import type { SimulationState } from "../api/types";
@@ -17,8 +16,7 @@ interface Props {
   state: SimulationState;
   selectedId: string | null;
   onAction: (kind: ActionKind, nodeId?: string) => void;
-  demoRunning: boolean;
-  onDemo: () => void;
+  scenarioRunning: boolean;
 }
 
 interface ButtonDef {
@@ -33,8 +31,7 @@ export default function ControlPanel({
   state,
   selectedId,
   onAction,
-  demoRunning,
-  onDemo,
+  scenarioRunning,
 }: Props) {
   const selected = state.nodes.find((n) => n.id === selectedId) ?? null;
   const leader = state.nodes.find((n) => n.id === state.current_leader) ?? null;
@@ -49,16 +46,16 @@ export default function ControlPanel({
 
   const buttons: ButtonDef[] = [
     { kind: "add", label: "Add Node", icon: Plus, reason:
-        demoRunning ? "Demo in progress" : undefined },
+        scenarioRunning ? "Scenario in progress" : undefined },
     { kind: "election", label: "Start Election", icon: Vote, reason:
-        demoRunning ? "Demo in progress"
+        scenarioRunning ? "Scenario in progress"
         : reachable.length === 0 ? "No online node is eligible" : undefined },
     {
       kind: "replicate",
       label: "Replicate Entry",
       icon: Layers,
-      reason: demoRunning
-        ? "Demo in progress"
+      reason: scenarioRunning
+        ? "Scenario in progress"
         : !leader
           ? "No leader elected"
           : !leaderReachable
@@ -103,15 +100,9 @@ export default function ControlPanel({
       label: "Reset Simulation",
       icon: RotateCcw,
       danger: true,
-      reason: demoRunning ? "Demo in progress" : undefined,
+      reason: scenarioRunning ? "Scenario in progress" : undefined,
     },
   ];
-
-  const demoReason = demoRunning
-    ? "Demo already in progress"
-    : !leader || leader.status !== "online" || leader.partitioned
-      ? "No reachable online leader to fail"
-      : undefined;
 
   return (
     <section className="rounded-xl border border-slate-800 bg-slate-900/60 p-4">
@@ -144,20 +135,6 @@ export default function ControlPanel({
           </button>
         ))}
       </div>
-      <button
-        type="button"
-        disabled={demoReason !== undefined}
-        title={demoReason ?? "Crash the leader and watch a new election, step by step"}
-        onClick={onDemo}
-        className={`mt-3 flex w-full items-center justify-center gap-2 rounded-lg border px-3 py-2.5 text-sm font-medium transition-colors ${
-          demoReason !== undefined
-            ? "cursor-not-allowed border-slate-700 bg-slate-900 text-slate-500 opacity-50"
-            : "border-emerald-400/40 bg-emerald-500/10 text-emerald-300 hover:border-emerald-300 hover:bg-emerald-500/20"
-        }`}
-      >
-        <Zap className="size-4 shrink-0" />
-        {demoRunning ? "Demo running…" : "Leader Failure Demo"}
-      </button>
     </section>
   );
 }

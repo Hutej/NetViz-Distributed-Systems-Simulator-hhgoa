@@ -30,8 +30,10 @@ export default function ClusterNode({ data, selected }: NodeProps<ClusterNodeTyp
       initial={{ opacity: 0, scale: 0.9 }}
       animate={{ opacity: online ? 1 : 0.5, scale: 1 }}
       transition={{ duration: 0.3 }}
-      className={`w-52 rounded-xl border-2 bg-slate-900/95 p-3 shadow-xl ${cardBorder(node)} ${
-        selected ? "ring-2 ring-emerald-300/70" : ""
+      className={`w-52 cursor-pointer rounded-xl border-2 bg-slate-900/95 p-3 shadow-xl transition-shadow hover:shadow-2xl ${cardBorder(node)} ${
+        selected
+          ? "ring-2 ring-teal-300 ring-offset-2 ring-offset-slate-950 shadow-[0_0_24px_rgba(45,212,191,0.4)]"
+          : ""
       }`}
     >
       <Handle type="target" position={Position.Left} className="!size-2 !border-none !bg-slate-600" />
@@ -69,7 +71,18 @@ export default function ClusterNode({ data, selected }: NodeProps<ClusterNodeTyp
           term <span className="font-mono text-slate-200">{node.term}</span>
         </span>
         <span>
-          log <span className="font-mono text-slate-200">{node.log_index}</span>
+          log{" "}
+          {/* key on the log index: the chip visibly pulses when a real
+              replication event changes it */}
+          <motion.span
+            key={node.log_index}
+            initial={{ scale: 1.5, color: "#5eead4" }}
+            animate={{ scale: 1, color: "#e2e8f0" }}
+            transition={{ duration: 0.8 }}
+            className="inline-block font-mono"
+          >
+            {node.log_index}
+          </motion.span>
         </span>
       </div>
 
